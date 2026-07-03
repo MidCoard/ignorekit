@@ -1,5 +1,7 @@
 'use strict';
 
+const { legacyCommands, runLegacyCommand } = require('./legacy-cli');
+
 function parseArgs(args) {
   const options = { _: [] };
   for (let index = 0; index < args.length; index += 1) {
@@ -52,6 +54,9 @@ async function runCli(args, env = {}) {
     if (command === 'help' || command === '--help' || command === '-h') {
       printHelp(stdout);
       return { exitCode: 0 };
+    }
+    if (legacyCommands.has(command)) {
+      return await runLegacyCommand(command, args.slice(1), env);
     }
     parseArgs(args.slice(1));
     throw new Error(`Unknown command: ${command}`);
