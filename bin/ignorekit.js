@@ -9,4 +9,7 @@ runCli(process.argv.slice(2), {
   cwd: process.cwd()
 }).then((result) => {
   process.exitCode = result.exitCode;
+}).catch((error) => {
+  process.stderr.write(`ignorekit: ${error.message}\n`);
+  process.exitCode = 1;
 });
