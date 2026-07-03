@@ -1,0 +1,18 @@
+{
+  "name": "ignorekit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Composable gitignore components, presets, and project-specific rules.",
+  "bin": {
+    "ignorekit": "bin/ignorekit.js"
+  },
+  "scripts": {
+    "build:all": "node bin/ignorekit.js build --all",
+    "check": "node bin/ignorekit.js check --all",
+    "list": "node bin/ignorekit.js list"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
+

@@ -1,0 +1,18 @@
+{
+  "name": "java-maven",
+  "description": "Java project built with Maven.",
+  "components": [
+    "platform/macos",
+    "platform/windows",
+    "editor/jetbrains",
+    "editor/vscode",
+    "editor/temporary-files",
+    "local/env-secrets",
+    "local/logs",
+    "local/assistant-artifacts",
+    "language/java",
+    "build/maven",
+    "editor/java-ide-metadata"
+  ]
+}
+

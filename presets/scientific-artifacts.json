@@ -1,0 +1,16 @@
+{
+  "name": "scientific-artifacts",
+  "description": "Research or analysis project with local generated scientific artifacts.",
+  "components": [
+    "platform/macos",
+    "platform/windows",
+    "editor/jetbrains",
+    "editor/vscode",
+    "editor/temporary-files",
+    "local/env-secrets",
+    "local/logs",
+    "local/assistant-artifacts",
+    "domain/scientific-artifacts"
+  ]
+}
+

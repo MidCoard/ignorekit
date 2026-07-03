@@ -1,0 +1,11 @@
+# Editor temporary files
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*.swo
+*~
+.history/
+

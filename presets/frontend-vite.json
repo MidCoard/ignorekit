@@ -1,0 +1,17 @@
+{
+  "name": "frontend-vite",
+  "description": "Node frontend project using Vite.",
+  "components": [
+    "platform/macos",
+    "platform/windows",
+    "editor/jetbrains",
+    "editor/vscode",
+    "editor/temporary-files",
+    "local/env-secrets",
+    "local/logs",
+    "local/assistant-artifacts",
+    "language/node",
+    "framework/vite"
+  ]
+}
+

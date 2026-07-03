@@ -1,0 +1,6 @@
+# Scientific and analysis artifacts
+*.asv
+*.mat
+*.h5
+*.fig
+
