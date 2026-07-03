@@ -1,8 +1,8 @@
 # Local scratch
 tmp/
+.worktrees/
 *.bak
 *.orig
 
 # Local IDE state
 .idea/
-
