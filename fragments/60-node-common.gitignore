@@ -1,0 +1,18 @@
+# Node dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Node build and test output
+dist/
+dist-ssr/
+build/
+coverage/
+.nyc_output/
+
+# Node caches and generated metadata
+*.tsbuildinfo
+.vite/
+.cache/
+.parcel-cache/
+

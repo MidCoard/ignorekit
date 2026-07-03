@@ -1,0 +1,291 @@
+{
+  "version": 1,
+  "generatedAt": "2026-07-03",
+  "roots": [
+    "D:\\IdeaProjects",
+    "D:\\WebstormProjects",
+    "D:\\WebStoreProjects"
+  ],
+  "projects": [
+    {
+      "root": "IdeaProjects",
+      "name": "AFSIMDoc",
+      "path": "D:\\IdeaProjects\\AFSIMDoc",
+      "profile": "generic-idea",
+      "detected": ["git", "idea"],
+      "extraPatterns": []
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "AIEnv",
+      "path": "D:\\IdeaProjects\\AIEnv",
+      "profile": "java-gradle",
+      "detected": ["gradle", "idea"],
+      "extraPatterns": []
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "code",
+      "path": "D:\\IdeaProjects\\code",
+      "profile": "generic-idea",
+      "detected": [],
+      "extraPatterns": []
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "Docs",
+      "path": "D:\\IdeaProjects\\Docs",
+      "profile": "generic-idea",
+      "detected": ["git", "idea"],
+      "extraPatterns": []
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "focess-api",
+      "path": "D:\\IdeaProjects\\focess-api",
+      "profile": "java-gradle",
+      "detected": ["git", "gradle", "idea"],
+      "extraPatterns": [
+        "HELP.md",
+        "/logs/",
+        "latest.log",
+        "curseforge.yml",
+        "*.gz"
+      ]
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "FocessCommand",
+      "path": "D:\\IdeaProjects\\FocessCommand",
+      "profile": "java-maven",
+      "detected": ["git", "maven", "idea"],
+      "extraPatterns": [
+        "FocessCommand-*.jar",
+        "focess-command-*.jar"
+      ]
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "FocessQQ",
+      "path": "D:\\IdeaProjects\\FocessQQ",
+      "profile": "java-maven",
+      "detected": ["git", "maven", "idea"],
+      "extraPatterns": [
+        "/cache/",
+        "/logs/",
+        "/lib/",
+        "/libs/",
+        "/plugins/",
+        "/docs/",
+        "/devices/",
+        "captcha.jpg",
+        "latest.log",
+        "FocessQQ-*.jar",
+        "focess-qq-*.jar",
+        "config.yml",
+        "temp.json",
+        "ts.obj",
+        "NightClass.obj",
+        "*.gz",
+        "temp.yml",
+        "permissions.yml"
+      ]
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "FocessScheduler",
+      "path": "D:\\IdeaProjects\\FocessScheduler",
+      "profile": "java-maven",
+      "detected": ["git", "maven", "idea"],
+      "extraPatterns": [
+        "focess-scheduler-*.jar",
+        "/docs/"
+      ]
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "focess_top_backend",
+      "path": "D:\\IdeaProjects\\focess_top_backend",
+      "profile": "java-gradle",
+      "detected": ["git", "gradle", "idea"],
+      "extraPatterns": [
+        "HELP.md",
+        "/docs/",
+        "/images/",
+        "focess-top-backend-0.0.1-SNAPSHOT.jar",
+        "/logs/",
+        "MIGRATION.md",
+        "src/main/resources/application-local.yml"
+      ]
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "jamming",
+      "path": "D:\\IdeaProjects\\jamming",
+      "profile": "scientific-artifacts",
+      "detected": ["git", "idea"],
+      "extraPatterns": [
+        "*.png"
+      ]
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "keystead",
+      "path": "D:\\IdeaProjects\\keystead",
+      "profile": "java-gradle",
+      "detected": ["git", "gradle", "idea", "codegraph"],
+      "extraPatterns": [
+        "docs/superpowers/"
+      ]
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "keystead-client",
+      "path": "D:\\IdeaProjects\\keystead-client",
+      "profile": "java-gradle",
+      "detected": ["gradle", "idea", "codegraph"],
+      "extraPatterns": [
+        "docs/superpowers/"
+      ]
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "keystead-server",
+      "path": "D:\\IdeaProjects\\keystead-server",
+      "profile": "java-gradle",
+      "detected": ["git", "gradle", "idea", "codegraph"],
+      "extraPatterns": [
+        "/docs/",
+        "/data/"
+      ]
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "Radar",
+      "path": "D:\\IdeaProjects\\Radar",
+      "profile": "generic-idea",
+      "detected": ["idea"],
+      "extraPatterns": []
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "RadarCorrection",
+      "path": "D:\\IdeaProjects\\RadarCorrection",
+      "profile": "scientific-artifacts",
+      "detected": ["git", "idea"],
+      "extraPatterns": [
+        "*.jpg",
+        "*.gif"
+      ]
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "RadarCorrection2",
+      "path": "D:\\IdeaProjects\\RadarCorrection2",
+      "profile": "scientific-artifacts",
+      "detected": ["git", "idea"],
+      "extraPatterns": [
+        "figs/*",
+        "!figs/report_factors/",
+        "*.png",
+        "!docs/ppt_figs/*.png",
+        "!figs_minimality_ecc/*.png",
+        "!figs/report_factors/*.png",
+        "!docs/report_revision/*.png"
+      ]
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "untitled",
+      "path": "D:\\IdeaProjects\\untitled",
+      "profile": "generic-idea",
+      "detected": ["idea"],
+      "extraPatterns": []
+    },
+    {
+      "root": "IdeaProjects",
+      "name": "veto",
+      "path": "D:\\IdeaProjects\\veto",
+      "profile": "java-gradle",
+      "detected": ["git", "gradle", "idea", "superpowers"],
+      "extraPatterns": [
+        "*.jar",
+        "*.war",
+        "/vault/",
+        "/work/",
+        "/audit/",
+        "/logs/",
+        "/models/",
+        "/veto-core/audit/",
+        "/temp/",
+        "/grammars/cache/",
+        "credentials.enc",
+        "*.gguf",
+        "*.enc",
+        "*.gz",
+        "*.tmp",
+        "veto-grammar-*.gbnf",
+        "/plans/",
+        "*.lck",
+        "*.zip",
+        "/docs/"
+      ]
+    },
+    {
+      "root": "WebstormProjects",
+      "name": "focess_api_backend",
+      "path": "D:\\WebstormProjects\\focess_api_backend",
+      "profile": "frontend-vite",
+      "detected": ["git", "npm", "vite", "idea"],
+      "extraPatterns": []
+    },
+    {
+      "root": "WebstormProjects",
+      "name": "focess_top_frontend",
+      "path": "D:\\WebstormProjects\\focess_top_frontend",
+      "profile": "frontend-vite",
+      "detected": ["git", "npm", "vite", "idea", "superpowers"],
+      "extraPatterns": [
+        "*.conf",
+        "*.patch",
+        "/docs/"
+      ]
+    },
+    {
+      "root": "WebstormProjects",
+      "name": "postgenerator",
+      "path": "D:\\WebstormProjects\\postgenerator",
+      "profile": "frontend-vite",
+      "detected": ["git", "npm", "vite", "idea"],
+      "extraPatterns": [
+        "*-dist/",
+        "**/agent-eval-report*",
+        "/packages/",
+        "/pids/",
+        ".file-manifest",
+        ".devcontainer/",
+        ".spark-workbench-id"
+      ]
+    },
+    {
+      "root": "WebstormProjects",
+      "name": "untitled",
+      "path": "D:\\WebstormProjects\\untitled",
+      "profile": "frontend-vite",
+      "detected": ["git", "npm"],
+      "extraPatterns": []
+    },
+    {
+      "root": "WebstormProjects",
+      "name": "veto-ui",
+      "path": "D:\\WebstormProjects\\veto-ui",
+      "profile": "frontend-vite",
+      "detected": ["git", "npm", "vite", "idea"],
+      "extraPatterns": [
+        "/public/config.json",
+        "/public/assets/models/"
+      ]
+    }
+  ]
+}
+
