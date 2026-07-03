@@ -2,6 +2,11 @@
 
 const { legacyCommands, runLegacyCommand } = require('./legacy-cli');
 
+const legacyAliases = new Map([
+  ['ls', 'list'],
+  ['verify', 'check']
+]);
+
 function parseArgs(args) {
   const options = { _: [] };
   for (let index = 0; index < args.length; index += 1) {
@@ -48,7 +53,8 @@ Legacy:
 async function runCli(args, env = {}) {
   const stdout = env.stdout || process.stdout;
   const stderr = env.stderr || process.stderr;
-  const command = args[0] || 'help';
+  const rawCommand = args[0] || 'help';
+  const command = legacyAliases.get(rawCommand) || rawCommand;
 
   try {
     if (command === 'help' || command === '--help' || command === '-h') {
@@ -59,7 +65,7 @@ async function runCli(args, env = {}) {
       return await runLegacyCommand(command, args.slice(1), env);
     }
     parseArgs(args.slice(1));
-    throw new Error(`Unknown command: ${command}`);
+    throw new Error(`Unknown command: ${rawCommand}`);
   } catch (error) {
     stderr.write(`ignorekit: ${error.message}\n`);
     return { exitCode: 1 };
