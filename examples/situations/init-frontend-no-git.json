@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "id": "init-frontend-no-git",
+  "workflow": "init",
+  "description": "Create a frontend project config and .gitignore without initializing Git.",
+  "command": "ignorekit init D:/WebstormProjects/demo-ui --preset frontend-vite --no-git",
+  "context": {
+    "targetPath": "D:/WebstormProjects/demo-ui",
+    "directoryState": "existing-empty",
+    "gitState": "not-a-repo"
+  },
+  "config": {
+    "version": 1,
+    "name": "demo-ui",
+    "preset": "frontend-vite",
+    "provider": {
+      "name": "gitignore.io",
+      "templates": ["node", "vue", "vite", "webstorm", "visualstudiocode", "windows", "macos"]
+    },
+    "components": ["local/env-secrets", "local/logs"],
+    "custom": ["/public/config.local.json"]
+  },
+  "generation": {
+    "enabled": true,
+    "output": ".gitignore",
+    "overwrite": false
+  },
+  "addons": [
+    {
+      "type": "ensureDirectory",
+      "create": false
+    }
+  ],
+  "expected": {
+    "writes": ["ignorekit.json", ".gitignore"],
+    "gitInit": "skip"
+  }
+}
+

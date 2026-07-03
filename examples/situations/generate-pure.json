@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "id": "generate-pure",
+  "workflow": "generate",
+  "description": "Generate .gitignore from config without any Git or filesystem side effects beyond the output file.",
+  "command": "ignorekit generate D:/IdeaProjects/veto/ignorekit.json",
+  "context": {
+    "targetPath": "D:/IdeaProjects/veto",
+    "gitState": "repo-root"
+  },
+  "config": {
+    "version": 1,
+    "name": "veto",
+    "preset": "java-gradle",
+    "provider": {
+      "name": "local"
+    },
+    "components": ["local/env-secrets", "local/logs", "local/assistant-artifacts"],
+    "custom": ["/vault/", "*.gguf"]
+  },
+  "generation": {
+    "enabled": true,
+    "output": ".gitignore",
+    "overwrite": true
+  },
+  "addons": [],
+  "expected": {
+    "writes": [".gitignore"],
+    "gitInit": "not-applicable",
+    "sideEffects": "none"
+  }
+}
+

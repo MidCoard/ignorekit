@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "id": "init-java-gradle-git",
+  "workflow": "init",
+  "description": "Create a new Java/Gradle project config, generate .gitignore, and ensure the target is a Git repository.",
+  "command": "ignorekit init D:/IdeaProjects/demo-java --preset java-gradle --git",
+  "context": {
+    "targetPath": "D:/IdeaProjects/demo-java",
+    "directoryState": "missing",
+    "gitState": "not-a-repo"
+  },
+  "config": {
+    "version": 1,
+    "name": "demo-java",
+    "preset": "java-gradle",
+    "provider": {
+      "name": "gitignore.io",
+      "templates": ["java", "gradle", "intellij", "visualstudiocode", "windows", "macos"]
+    },
+    "components": ["local/env-secrets", "local/logs", "local/assistant-artifacts"],
+    "custom": []
+  },
+  "generation": {
+    "enabled": true,
+    "output": ".gitignore",
+    "overwrite": false
+  },
+  "addons": [
+    {
+      "type": "ensureDirectory",
+      "create": true
+    },
+    {
+      "type": "ensureGitRepo",
+      "allowNested": false
+    }
+  ],
+  "expected": {
+    "writes": ["ignorekit.json", ".gitignore"],
+    "gitInit": "run-if-not-repo"
+  }
+}
+

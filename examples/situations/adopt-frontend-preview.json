@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "id": "adopt-frontend-preview",
+  "workflow": "adopt",
+  "description": "Adopt an existing frontend project, generate a preview, and leave the current .gitignore untouched.",
+  "command": "ignorekit adopt D:/WebstormProjects/veto-ui --preset frontend-vite --preview",
+  "context": {
+    "targetPath": "D:/WebstormProjects/veto-ui",
+    "directoryState": "existing-non-empty",
+    "gitState": "repo-root",
+    "existingGitignore": ".gitignore"
+  },
+  "config": {
+    "version": 1,
+    "name": "veto-ui",
+    "preset": "frontend-vite",
+    "provider": {
+      "name": "gitignore.io",
+      "templates": ["node", "react", "vite", "webstorm", "visualstudiocode", "windows", "macos"]
+    },
+    "components": ["local/env-secrets", "local/logs"],
+    "custom": ["/public/config.json", "/public/assets/models/"]
+  },
+  "generation": {
+    "enabled": true,
+    "output": ".gitignore.preview",
+    "overwrite": false
+  },
+  "addons": [],
+  "expected": {
+    "writes": ["ignorekit.json", ".gitignore.preview"],
+    "gitInit": "skip-existing-repo"
+  }
+}
+

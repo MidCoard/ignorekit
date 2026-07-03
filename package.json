@@ -9,10 +9,10 @@
   "scripts": {
     "build:all": "node bin/ignorekit.js build --all",
     "check": "node bin/ignorekit.js check --all",
-    "list": "node bin/ignorekit.js list"
+    "list": "node bin/ignorekit.js list",
+    "validate:situations": "node scripts/validate-situations.js"
   },
   "engines": {
     "node": ">=18"
   }
 }
-

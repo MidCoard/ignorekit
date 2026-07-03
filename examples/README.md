@@ -2,5 +2,12 @@
 
 Generated project recommendations are stored in `generated/`.
 
-Use this folder for hand-written examples only when a project-independent sample is useful.
+Hand-written examples live here:
 
+- `situations/`: workflow situations and their corresponding JSON definitions.
+
+Validate them with:
+
+```bash
+npm run validate:situations
+```

@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "id": "init-existing-git",
+  "workflow": "init",
+  "description": "Run init in an existing Git repository; --git means ensure Git exists, so git init is skipped.",
+  "command": "ignorekit init D:/IdeaProjects/existing --preset generic-idea --git",
+  "context": {
+    "targetPath": "D:/IdeaProjects/existing",
+    "directoryState": "existing-non-empty",
+    "gitState": "repo-root"
+  },
+  "config": {
+    "version": 1,
+    "name": "existing",
+    "preset": "generic-idea",
+    "provider": {
+      "name": "local"
+    },
+    "components": ["local/env-secrets", "local/logs"],
+    "custom": []
+  },
+  "generation": {
+    "enabled": true,
+    "output": ".gitignore",
+    "overwrite": false
+  },
+  "addons": [
+    {
+      "type": "ensureGitRepo",
+      "allowNested": false
+    }
+  ],
+  "expected": {
+    "writes": ["ignorekit.json", ".gitignore"],
+    "gitInit": "skip-existing-repo"
+  }
+}
+

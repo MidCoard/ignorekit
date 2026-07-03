@@ -10,6 +10,12 @@ components -> presets -> project custom rules -> generated .gitignore
 
 ## Model
 
+Detailed model docs:
+
+- `docs/model.md`
+- `docs/structure.md`
+- `docs/situations.md`
+
 ### Component
 
 A component is one atomic ignore type:
@@ -81,6 +87,12 @@ Generate every project recommendation:
 node bin/ignorekit.js build --all
 ```
 
+Validate the situation examples:
+
+```bash
+npm run validate:situations
+```
+
 Check one real project `.gitignore` against the composed standard:
 
 ```bash
@@ -133,4 +145,3 @@ The earlier PowerShell scripts are still present under `scripts/`, but `ignoreki
 - Keep frontend lockfiles trackable.
 - Do not hide broad source categories like all Markdown files unless a project has an explicit local-only reason.
 - Put personal machine/editor noise in a global Git excludes file when it does not belong to the team.
-

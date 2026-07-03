@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "id": "layered-workspace-override",
+  "workflow": "generate",
+  "description": "Generate using a shipped preset with an organization/workspace component layered above dist definitions.",
+  "command": "ignorekit generate ./ignorekit.json --workspace ./.ignorekit",
+  "context": {
+    "targetPath": "./service",
+    "definitionLayers": ["dist", "user", "workspace", "project"]
+  },
+  "config": {
+    "version": 1,
+    "name": "service",
+    "preset": "java-gradle",
+    "provider": {
+      "name": "gitignore.io",
+      "templates": ["java", "gradle", "intellij", "windows", "macos"]
+    },
+    "components": ["local/env-secrets", "workspace/company-runtime"],
+    "custom": ["/service.local.yml"]
+  },
+  "generation": {
+    "enabled": true,
+    "output": ".gitignore",
+    "overwrite": true
+  },
+  "addons": [],
+  "expected": {
+    "writes": [".gitignore"],
+    "definitionResolution": "dist<user<workspace<project"
+  }
+}
+
