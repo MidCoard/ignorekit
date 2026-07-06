@@ -75,6 +75,52 @@ List available components, presets, and projects:
 node bin/ignorekit.js list
 ```
 
+Generate a `.gitignore` from a project config (pure, no Git side effects):
+
+```bash
+node bin/ignorekit.js generate ./ignorekit.json
+```
+
+Initialize a new project with config and `.gitignore`:
+
+```bash
+node bin/ignorekit.js init D:/IdeaProjects/demo --preset java-gradle --git
+node bin/ignorekit.js init D:/IdeaProjects/demo --preset frontend-vite --no-git
+```
+
+Adopt an existing project (creates config + preview):
+
+```bash
+node bin/ignorekit.js adopt D:/IdeaProjects/veto --preset java-gradle
+node bin/ignorekit.js adopt D:/IdeaProjects/veto --preset java-gradle --apply
+```
+
+Extract a reusable component from an existing `.gitignore`:
+
+```bash
+node bin/ignorekit.js extract component local/runtime --from D:/IdeaProjects/api/.gitignore
+```
+
+Create a new preset from a base preset plus components:
+
+```bash
+node bin/ignorekit.js preset create java-gradle-extended --base java-gradle --component local/runtime
+```
+
+Validate the situation examples:
+
+```bash
+npm run validate:situations
+```
+
+Run the test suite:
+
+```bash
+npm run test:unit
+```
+
+### Legacy Commands
+
 Generate one project recommendation into `generated/`:
 
 ```bash
@@ -85,12 +131,6 @@ Generate every project recommendation:
 
 ```bash
 node bin/ignorekit.js build --all
-```
-
-Validate the situation examples:
-
-```bash
-npm run validate:situations
 ```
 
 Check one real project `.gitignore` against the composed standard:
@@ -121,6 +161,9 @@ If installed through npm later, the same commands become:
 
 ```bash
 ignorekit list
+ignorekit generate ./ignorekit.json
+ignorekit init D:/IdeaProjects/demo --preset java-gradle --git
+ignorekit adopt D:/IdeaProjects/veto --preset java-gradle
 ignorekit build veto --root IdeaProjects
 ignorekit apply veto --root IdeaProjects --yes
 ```

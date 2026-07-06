@@ -73,3 +73,24 @@ dist/
 - Reusable ignore rules belong in `components`.
 - Shared recipes belong in `presets`.
 
+## Implementation Map
+
+- `src/cli.js` owns command dispatch, argument parsing, and help text.
+- `src/generator.js` owns pure `.gitignore` generation from config + resolver.
+- `src/providers/local.js` owns the local-only builder (no upstream).
+- `src/providers/gitignore-io.js` owns the gitignore.io/Toptal API integration.
+- `src/providers/index.js` owns provider lookup by name.
+- `src/definitions/resolver.js` owns dist/user/workspace/project definition lookup.
+- `src/config/project-config.js` owns normalize and validate `ignorekit.json`.
+- `src/core/json.js` owns JSON read/write helpers.
+- `src/core/text.js` owns newline normalization and generated header helpers.
+- `src/core/path.js` owns path resolution, definition ID validation, safe output checks.
+- `src/git.js` owns Git state detection, `ensureGitRepo`, tracked ignored file discovery, cached removal.
+- `src/workflows/init.js` owns new-project config creation and init addons.
+- `src/workflows/adopt.js` owns existing-project config creation and adopt addons.
+- `src/workflows/extract.js` owns component extraction from an existing `.gitignore`.
+- `src/workflows/preset.js` owns direct preset creation.
+- `src/legacy/projects-manifest.js` owns the central `projects.json` manifest lookup.
+- `src/legacy-cli.js` owns the legacy commands (list, build, check, diff, apply).
+- `test/helpers/temp-workspace.js` owns the temporary directory helper for tests.
+
