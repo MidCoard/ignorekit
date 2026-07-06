@@ -1,16 +1,39 @@
 {
   "name": "ignorekit",
   "version": "0.2.0",
-  "private": true,
   "description": "Composable gitignore components, presets, and project-specific rules.",
+  "keywords": [
+    "gitignore",
+    "generator",
+    "ignore",
+    "git",
+    "component",
+    "preset"
+  ],
+  "homepage": "https://github.com/MidCoard/gitignore-standards#readme",
+  "bugs": {
+    "url": "https://github.com/MidCoard/gitignore-standards/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MidCoard/gitignore-standards.git"
+  },
+  "license": "MIT",
   "bin": {
     "ignorekit": "bin/ignorekit.js"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "components/",
+    "presets/",
+    "scripts/"
+  ],
   "scripts": {
     "list": "node bin/ignorekit.js list",
-    "validate:situations": "node scripts/validate-situations.js",
     "test": "node --test test/*.test.js",
-    "test:unit": "node --test test/*.test.js"
+    "test:unit": "node --test test/*.test.js",
+    "prepublishOnly": "npm run test:unit"
   },
   "engines": {
     "node": ">=18"

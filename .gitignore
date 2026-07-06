@@ -91,3 +91,5 @@ coverage/
 
 # Project-specific ignores
 .worktrees/
+docs/
+examples/

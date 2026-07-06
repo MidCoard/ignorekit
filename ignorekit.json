@@ -4,6 +4,8 @@
   "preset": "generic-idea",
   "components": ["language/node"],
   "custom": [
-    ".worktrees/"
+    ".worktrees/",
+    "docs/",
+    "examples/"
   ]
 }
