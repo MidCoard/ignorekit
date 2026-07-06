@@ -90,6 +90,4 @@ coverage/
 .parcel-cache/
 
 # Project-specific ignores
-generated/
-reports/
 .worktrees/

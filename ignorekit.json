@@ -2,11 +2,8 @@
   "version": 1,
   "name": "ignorekit",
   "preset": "generic-idea",
-  "provider": { "name": "local" },
   "components": ["language/node"],
   "custom": [
-    "generated/",
-    "reports/",
     ".worktrees/"
   ]
 }
