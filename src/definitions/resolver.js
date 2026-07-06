@@ -35,16 +35,18 @@ function createDefinitionResolver(options = {}) {
       try {
         findDefinition('components', id, '.gitignore');
         return true;
-      } catch {
-        return false;
+      } catch (error) {
+        if (error.message.startsWith('Unknown component')) return false;
+        throw error;
       }
     },
     hasPreset(id) {
       try {
         findDefinition('presets', id, '.json');
         return true;
-      } catch {
-        return false;
+      } catch (error) {
+        if (error.message.startsWith('Unknown preset')) return false;
+        throw error;
       }
     }
   };

@@ -18,7 +18,6 @@ The first implementation stores shipped definitions directly in this repository:
 ```text
 components/
 presets/
-projects.json
 ```
 
 The long-term layout can map those to:
@@ -49,6 +48,9 @@ dist/
 
 ## Command Responsibilities
 
+`list`
+: List available components and presets from the dist root.
+
 `init`
 : Create project config, generate `.gitignore`, and run init addons.
 
@@ -75,7 +77,7 @@ dist/
 
 ## Implementation Map
 
-- `src/cli.js` owns command dispatch, argument parsing, and help text.
+- `src/cli.js` owns command dispatch, argument parsing, help text, and the list command.
 - `src/generator.js` owns pure `.gitignore` generation from config + resolver.
 - `src/providers/local.js` owns the local-only builder (no upstream).
 - `src/providers/gitignore-io.js` owns the gitignore.io/Toptal API integration.
@@ -90,7 +92,4 @@ dist/
 - `src/workflows/adopt.js` owns existing-project config creation and adopt addons.
 - `src/workflows/extract.js` owns component extraction from an existing `.gitignore`.
 - `src/workflows/preset.js` owns direct preset creation.
-- `src/legacy/projects-manifest.js` owns the central `projects.json` manifest lookup.
-- `src/legacy-cli.js` owns the legacy commands (list, build, check, diff, apply).
 - `test/helpers/temp-workspace.js` owns the temporary directory helper for tests.
-

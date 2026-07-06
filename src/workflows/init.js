@@ -3,23 +3,18 @@
 const fs = require('fs');
 const path = require('path');
 const { writeJson } = require('../core/json');
+const { buildProjectConfig } = require('../config/build-config');
 const { createDefinitionResolver } = require('../definitions/resolver');
 const { generateGitignore } = require('../generator');
 const { ensureGitRepo } = require('../git');
+
+const DEFAULT_DIST_ROOT = path.resolve(__dirname, '..', '..');
 
 async function runInitWorkflow(options, env) {
   const projectPath = path.resolve(env.cwd || process.cwd(), options.projectPath);
   fs.mkdirSync(projectPath, { recursive: true });
 
-  const config = {
-    version: 1,
-    name: path.basename(projectPath),
-    preset: options.preset,
-    provider: { name: options.provider || 'local' },
-    components: options.components || [],
-    custom: [],
-    addons: {}
-  };
+  const config = buildProjectConfig(path.basename(projectPath), options);
 
   const configPath = path.join(projectPath, 'ignorekit.json');
   if (fs.existsSync(configPath) && !options.overwrite) {
@@ -28,7 +23,7 @@ async function runInitWorkflow(options, env) {
   writeJson(configPath, config);
 
   const resolver = createDefinitionResolver({
-    distRoot: options.distRoot || path.resolve(__dirname, '..', '..'),
+    distRoot: options.distRoot || DEFAULT_DIST_ROOT,
     userRoot: options.userRoot,
     workspaceRoot: options.workspaceRoot,
     projectRoot: projectPath
