@@ -1,9 +1,0 @@
-# Java common
-*.class
-out/
-!**/src/main/**/out/
-!**/src/test/**/out/
-bin/
-!**/src/main/**/bin/
-!**/src/test/**/bin/
-

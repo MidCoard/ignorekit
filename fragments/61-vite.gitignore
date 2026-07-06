@@ -1,6 +1,0 @@
-# Vite and browser test output
-cypress/videos/
-cypress/screenshots/
-playwright-report/
-test-results/
-

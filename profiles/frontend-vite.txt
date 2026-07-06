@@ -1,8 +1,0 @@
-fragments/00-os.gitignore
-fragments/10-editors.gitignore
-fragments/20-env-secrets.gitignore
-fragments/30-logs.gitignore
-fragments/40-local-ai-tools.gitignore
-fragments/60-node-common.gitignore
-fragments/61-vite.gitignore
-

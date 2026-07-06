@@ -1,9 +1,0 @@
-fragments/00-os.gitignore
-fragments/10-editors.gitignore
-fragments/20-env-secrets.gitignore
-fragments/30-logs.gitignore
-fragments/40-local-ai-tools.gitignore
-fragments/50-java-common.gitignore
-fragments/52-java-maven.gitignore
-fragments/53-java-ide-metadata.gitignore
-
