@@ -10,13 +10,13 @@
     "component",
     "preset"
   ],
-  "homepage": "https://github.com/MidCoard/gitignore-standards#readme",
+  "homepage": "https://github.com/MidCoard/ignorekit#readme",
   "bugs": {
-    "url": "https://github.com/MidCoard/gitignore-standards/issues"
+    "url": "https://github.com/MidCoard/ignorekit/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MidCoard/gitignore-standards.git"
+    "url": "git+https://github.com/MidCoard/ignorekit.git"
   },
   "license": "MIT",
   "bin": {
