@@ -6,7 +6,7 @@ const test = require('node:test');
 const { runCli } = require('../src/cli');
 const { createTempWorkspace } = require('./helpers/temp-workspace');
 
-test('init creates config and gitignore without forcing git init when --no-git is used', async () => {
+test('init with --preset skips interactive picker', async () => {
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
@@ -36,28 +36,32 @@ test('init creates config and gitignore without forcing git init when --no-git i
   }
 });
 
-test('init requires --preset', async () => {
-  const errors = [];
-  const result = await runCli(['init', '/tmp/test-project'], {
-    stdout: { write: () => {} },
-    stderr: { write: (text) => errors.push(String(text)) },
-    cwd: process.cwd()
-  });
+test('init defaults path to current directory', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
 
-  assert.equal(result.exitCode, 1);
-  assert.match(errors.join(''), /init requires --preset/);
-});
+    const result = await runCli([
+      'init',
+      '--preset',
+      'demo',
+      '--no-git',
+      '--dist-root',
+      workspace.path('dist'),
+      '--yes'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
 
-test('init requires a project path', async () => {
-  const errors = [];
-  const result = await runCli(['init', '--preset', 'demo'], {
-    stdout: { write: () => {} },
-    stderr: { write: (text) => errors.push(String(text)) },
-    cwd: process.cwd()
-  });
-
-  assert.equal(result.exitCode, 1);
-  assert.match(errors.join(''), /init requires a project path/);
+    assert.equal(result.exitCode, 0);
+    // Should create ignorekit.json in cwd (workspace.root)
+    assert.equal(fs.existsSync(workspace.path('ignorekit.json')), true);
+  } finally {
+    workspace.cleanup();
+  }
 });
 
 test('init refuses to overwrite existing config without --overwrite', async () => {

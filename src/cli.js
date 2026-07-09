@@ -13,7 +13,7 @@ const { runAdoptWorkflow } = require('./workflows/adopt');
 const { runExtractComponent } = require('./workflows/extract');
 const { runPresetCreate } = require('./workflows/preset');
 const { runExplainWorkflow } = require('./workflows/explain');
-const { runAnalyzeWorkflow } = require('./workflows/analyze');
+const { runAnalyzeWorkflow, analyzeGitignore } = require('./workflows/analyze');
 
 // --- Argument parsing ---
 
@@ -117,13 +117,13 @@ Examples:
     init: `ignorekit init - Initialize a new project
 
 Usage:
-  ignorekit init <project-path> --preset <name> [options]
+  ignorekit init [project-path] [--preset <name>] [options]
 
 Arguments:
-  project-path    Directory to initialize
+  project-path    Directory to initialize (default: current directory)
 
 Options:
-  --preset <name>        Preset to use (required)
+  --preset <name>        Preset to use (if omitted, shows interactive picker)
   --provider <name>      Provider name: local (default) or gitignore.io
   --git                  Run git init in the project directory
   --no-git               Skip git init (default)
@@ -132,22 +132,24 @@ Options:
   --allow-nested-git     Allow initializing a nested Git repo
 
 Creates an ignorekit.json config and generates a .gitignore.
-If --git is set, also initializes a Git repository (unless one already exists).
+If --preset is omitted, an interactive picker will suggest presets
+based on any existing .gitignore in the project.
 
 Examples:
+  ignorekit init                          # interactive: pick preset, use current dir
   ignorekit init ./my-app --preset java-gradle --git
   ignorekit init ./web-app --preset frontend-vite --no-git
 `,
     adopt: `ignorekit adopt - Adopt an existing project into ignorekit
 
 Usage:
-  ignorekit adopt <project-path> --preset <name> [options]
+  ignorekit adopt [project-path] [--preset <name>] [options]
 
 Arguments:
-  project-path    Path to the existing project directory
+  project-path    Path to the existing project directory (default: current directory)
 
 Options:
-  --preset <name>        Preset to use (required)
+  --preset <name>        Preset to use (if omitted, shows interactive picker)
   --provider <name>      Provider name: local (default) or gitignore.io
   --apply                Overwrite .gitignore directly (default: write .gitignore.preview)
   --overwrite-config     Overwrite an existing ignorekit.json
@@ -155,13 +157,16 @@ Options:
   --yes                  Confirm removal without prompt (use with --remove-cached)
   --dist-root <path>     Root directory for shipped definitions
 
+If --preset is omitted, analyzes any existing .gitignore and suggests
+the best-matching preset interactively.
+
 By default, adopt writes a .gitignore.preview file so you can review before
 applying. Use --apply to overwrite .gitignore directly.
 
 Examples:
-  ignorekit adopt ./existing-project --preset java-gradle
-  ignorekit adopt ./existing-project --preset java-gradle --apply
-  ignorekit adopt ./existing-project --preset java-gradle --remove-cached --yes
+  ignorekit adopt                           # interactive: analyze, pick preset
+  ignorekit adopt --preset java-gradle      # use current directory with this preset
+  ignorekit adopt ./project --preset frontend-vite --apply
 `,
     extract: `ignorekit extract - Extract a reusable component from .gitignore
 
@@ -321,6 +326,98 @@ async function commandGenerate(args, env) {
   env.stdout.write(`Generated ${outputPath}\n`);
 }
 
+// --- Interactive preset picker ---
+
+const readline = require('readline');
+
+/**
+ * Interactive preset picker. When --preset is missing:
+ * 1. If there's a .gitignore, analyze it and suggest the best match
+ * 2. Show a numbered list of all presets for the user to pick
+ * 3. Return the chosen preset name, or null if cancelled
+ */
+async function pickPresetInteractive(options, env) {
+  const stdout = env.stdout || process.stdout;
+  const stdin = env.stdin || process.stdin;
+  const distRoot = options.distRoot || DIST_ROOT;
+
+  // Try to auto-detect from existing .gitignore
+  let suggestion = null;
+  const projectPath = path.resolve(env.cwd || process.cwd(), options.projectPath || '.');
+  const gitignorePath = path.join(projectPath, '.gitignore');
+
+  if (fs.existsSync(gitignorePath)) {
+    stdout.write('\nFound .gitignore — analyzing for preset suggestions...\n\n');
+    try {
+      const analysis = analyzeGitignore({
+        gitignorePath,
+        distRoot,
+        userRoot: options.userRoot,
+        workspaceRoot: options.workspaceRoot
+      });
+
+      if (analysis.bestPreset && analysis.bestPreset.score > 0) {
+        suggestion = analysis.bestPreset.id;
+        const matchInfo = `${analysis.bestPreset.fullCount}/${analysis.bestPreset.componentCount} components matched`;
+        stdout.write(`💡 Best match: ${suggestion} (${matchInfo})\n\n`);
+      }
+    } catch {
+      // Analysis failed — fall through to manual selection
+    }
+  }
+
+  // List all presets for the user to pick
+  const presetsDir = path.join(distRoot, 'presets');
+  let presetIds;
+  try {
+    presetIds = listDefinitions(presetsDir, '.json');
+  } catch {
+    stdout.write('No presets available.\n');
+    return null;
+  }
+
+  stdout.write('Available presets:\n');
+  for (let i = 0; i < presetIds.length; i++) {
+    const marker = presetIds[i] === suggestion ? ' ← suggested' : '';
+    stdout.write(`  ${i + 1}. ${presetIds[i]}${marker}\n`);
+  }
+  stdout.write(`  0. blank (no components — build from scratch)\n`);
+  stdout.write('\n');
+
+  // Read user input
+  const answer = await readLine(stdin, stdout, suggestion
+    ? `Pick a preset (1-${presetIds.length}, 0=blank) [${presetIds.indexOf(suggestion) + 1}]: `
+    : `Pick a preset (1-${presetIds.length}, 0=blank): `
+  );
+
+  if (answer.trim() === '') {
+    // Default to suggestion if available
+    if (suggestion) return suggestion;
+    stdout.write('No preset selected.\n');
+    return null;
+  }
+
+  const num = parseInt(answer.trim(), 10);
+  if (num === 0) return 'blank';
+  if (num >= 1 && num <= presetIds.length) return presetIds[num - 1];
+
+  // Try matching by name
+  if (presetIds.includes(answer.trim())) return answer.trim();
+
+  stdout.write(`Invalid selection: ${answer.trim()}\n`);
+  return null;
+}
+
+function readLine(stdin, stdout, prompt) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: stdin, output: stdout });
+    rl.question(prompt, (answer) => {
+      rl.close();
+      resolve(answer);
+    });
+  });
+}
+
 // --- Command dispatch ---
 // review #13 by-design: runCli uses a sequential if/else dispatch block.
 // Future refactor target: extract to a command registry pattern for extensibility.
@@ -379,12 +476,11 @@ async function runCli(args, env = {}) {
     // Init
     if (command === 'init') {
       const options = parseArgs(args.slice(1));
-      options.projectPath = options._[0];
-      if (!options.projectPath) {
-        throw new Error('init requires a project path');
-      }
+      options.projectPath = options._[0] || '.';
       if (!options.preset) {
-        throw new Error('init requires --preset');
+        const picked = await pickPresetInteractive(options, { stdout, stderr, stdin: env.stdin });
+        if (!picked) return { exitCode: 1 };
+        options.preset = picked;
       }
       options.git = Boolean(options.git);
       if (options.noGit) {
@@ -399,12 +495,11 @@ async function runCli(args, env = {}) {
     // Adopt
     if (command === 'adopt') {
       const options = parseArgs(args.slice(1));
-      options.projectPath = options._[0];
-      if (!options.projectPath) {
-        throw new Error('adopt requires a project path');
-      }
+      options.projectPath = options._[0] || '.';
       if (!options.preset) {
-        throw new Error('adopt requires --preset');
+        const picked = await pickPresetInteractive(options, { stdout, stderr, stdin: env.stdin });
+        if (!picked) return { exitCode: 1 };
+        options.preset = picked;
       }
       options.templates = collectRepeated(args.slice(1), '--template');
       const result = await runAdoptWorkflow(options, { stdout, stderr, cwd: env.cwd });

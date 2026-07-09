@@ -1,0 +1,5 @@
+{
+  "name": "blank",
+  "description": "Empty preset — no components. Build your .gitignore from scratch by adding components and custom rules.",
+  "components": []
+}

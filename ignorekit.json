@@ -1,7 +1,7 @@
 {
   "version": 1,
   "name": "ignorekit",
-  "preset": "generic-idea",
+  "preset": "generic",
   "components": ["language/node"],
   "custom": [
     ".worktrees/",
