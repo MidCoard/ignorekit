@@ -142,17 +142,35 @@ test('classifyMatch thresholds work correctly', () => {
   assert.equal(classifyMatch(0.0), 'none');
 });
 
-test('scorePreset weights full matches higher than partial', () => {
+test('scorePreset weights completeness over raw count', () => {
   const componentResults = new Map();
   componentResults.set('a', { matched: ['x'], unmatched: [], total: 1, ratio: 1.0 });
   componentResults.set('b', { matched: ['y'], unmatched: ['z'], total: 2, ratio: 0.5 });
   componentResults.set('c', { matched: [], unmatched: ['w'], total: 1, ratio: 0.0 });
 
+  // Preset with 1 full + 1 partial out of 2
   const score1 = scorePreset(['a', 'b'], componentResults);
   assert.equal(score1.fullCount, 1);
   assert.equal(score1.partialCount, 1);
-  assert.equal(score1.score, 3); // full*2 + partial*1 = 2+1
 
+  // Preset with 0 matches (all miss)
   const score2 = scorePreset(['c'], componentResults);
-  assert.equal(score2.score, 0); // miss = 0
+  assert.equal(score2.fullCount, 0);
+  assert.ok(score1.score > score2.score, 'partial match should beat no match');
+});
+
+test('scorePreset: perfect match beats imperfect larger preset', () => {
+  // 8/8 perfect match should beat 9/10 with one miss
+  const componentResults = new Map();
+  // Only 9 out of 10 components have results — comp10 is missing (a real miss)
+  for (let i = 1; i <= 9; i++) {
+    componentResults.set(`comp${i}`, { matched: [`x${i}`], unmatched: [], total: 1, ratio: 1.0 });
+  }
+
+  // generic-idea: 8 components, all fully matched = perfect
+  const perfect = scorePreset(['comp1','comp2','comp3','comp4','comp5','comp6','comp7','comp8'], componentResults);
+  // frontend-vite: 10 components, 9 matched, comp10 is a miss
+  const imperfect = scorePreset(['comp1','comp2','comp3','comp4','comp5','comp6','comp7','comp8','comp9','comp10'], componentResults);
+
+  assert.ok(perfect.score > imperfect.score, `perfect 8/8 (${perfect.score}) should beat imperfect 9/10 (${imperfect.score})`);
 });

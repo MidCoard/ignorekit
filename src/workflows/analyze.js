@@ -73,8 +73,17 @@ function scorePreset(presetComponents, componentResults) {
     else if (cls === 'partial') partialCount++;
     else missCount++;
   }
-  // Weight: full match = 2, partial = 1, miss = 0
-  const score = fullCount * 2 + partialCount;
+  const total = presetComponents.length;
+  // Completeness: what fraction of the preset's components are fully matched
+  // This ensures a perfect 8/8 beats an imperfect 9/10
+  const completeness = total > 0 ? fullCount / total : 0;
+  // Coverage: how many components matched (raw signal)
+  const coverage = fullCount * 2 + partialCount;
+  // Penalty: missCount means the preset would add rules NOT in the current .gitignore
+  const penalty = missCount;
+  // Final score: completeness is the primary signal, coverage is the tiebreaker,
+  // penalty reduces score for presets that would add unwanted rules
+  const score = Math.round(completeness * 1000 + coverage - penalty);
   return { score, fullCount, partialCount, missCount };
 }
 
