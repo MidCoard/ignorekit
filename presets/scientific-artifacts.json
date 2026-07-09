@@ -9,7 +9,7 @@
     "editor/temporary-files",
     "local/env-secrets",
     "local/logs",
-    "local/assistant-artifacts",
+    "local/ai-claude",
     "domain/scientific-artifacts"
   ]
 }

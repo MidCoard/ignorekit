@@ -1,108 +1,145 @@
 # ignorekit
 
-`ignorekit` is a cross-platform tool for building `.gitignore` files from composable ignore types.
+A cross-platform CLI tool for building `.gitignore` files from composable components and presets. Zero runtime dependencies, Node.js >= 18.
 
-The goal is not to scan every project and guess forever. The goal is to keep ignore rules decomposed, named, reusable, and reproducible:
+## How it works
 
-```text
-components -> presets -> project custom rules -> generated .gitignore
+```
+components → presets → project custom rules → generated .gitignore
 ```
 
-## Model
+- **Components** are atomic ignore rules: `platform/windows`, `language/java`, `build/gradle`, etc.
+- **Presets** are project-type templates that group components together: `java-gradle`, `frontend-vite`, `generic`, etc.
+- **Custom rules** are project-specific patterns that don't fit any component.
 
-Detailed model docs:
+You describe *what* your project is (via a preset + components + custom rules), and ignorekit generates the `.gitignore`. When you change the config, regenerate — same config always produces the same output.
 
-- `docs/model.md`
-- `docs/structure.md`
-- `docs/situations.md`
+## What is a preset?
 
-### Component
+A preset is a **project type template**. It answers the question: "what kind of project is this?" Each preset bundles the components that make sense for that project type:
 
-A component is one atomic ignore type:
+| Preset | Project type | What it includes |
+|--------|-------------|-----------------|
+| `generic` | Any project | platform, editor, secrets, logs, AI assistant |
+| `java-gradle` | Java + Gradle | generic + Java + Gradle + Java IDE metadata |
+| `java-maven` | Java + Maven | generic + Java + Maven + Java IDE metadata |
+| `frontend-vite` | Vue/React/Svelte + Vite | generic + Node + Vite |
+| `scientific` | Research / ML / data analysis | generic + scientific artifacts |
+| `blank` | Start from scratch | nothing — you build it yourself |
 
-- `platform/windows`
-- `platform/macos`
-- `editor/jetbrains`
-- `editor/vscode`
-- `language/java`
-- `build/gradle`
-- `build/maven`
-- `language/node`
-- `framework/vite`
-- `local/env-secrets`
-- `local/logs`
+Presets are **starting points**, not cages. You can always add extra components or custom rules on top.
 
-Components live in `components/`.
+## Commands
 
-### Preset
+### `list` — Browse what's available
 
-A preset is an ordered list of components:
+```bash
+ignorekit list                # all components and presets
+ignorekit list components     # just components
+ignorekit list presets        # just presets
+```
 
-- `java-gradle`
-- `java-maven`
-- `frontend-vite`
-- `generic-idea`
-- `scientific-artifacts`
+### `init` — Start a new project
 
-Presets live in `presets/`.
+```bash
+ignorekit init                                    # interactive: pick preset, use current dir
+ignorekit init ./my-app --preset java-gradle --git
+ignorekit init ./web-app --preset frontend-vite --no-git
+```
 
-### Project Custom Rules
+If `--preset` is omitted, an interactive picker shows all presets with the best match suggested.
 
-Projects choose a preset, then add only their own runtime/data rules:
+### `adopt` — Bring an existing project into ignorekit
+
+```bash
+ignorekit adopt                                   # interactive: analyze, pick preset, preview
+ignorekit adopt --preset java-gradle              # use current directory
+ignorekit adopt --preset java-gradle --apply      # overwrite .gitignore directly
+```
+
+Adopt analyzes your existing `.gitignore`, shows what's already covered by components, carries over custom rules, and generates a `.gitignore.preview` for review.
+
+### `generate` — Build .gitignore from config
+
+```bash
+ignorekit generate ./ignorekit.json
+ignorekit generate ./ignorekit.json --output ./path/.gitignore
+```
+
+Pure — no Git side effects.
+
+### `explain` — Understand your config
+
+```bash
+ignorekit explain ./ignorekit.json
+ignorekit explain ./ignorekit.json --verbose
+```
+
+Shows what each component in your config contributes, like `EXPLAIN` in SQL. No generation — just transparency.
+
+### `analyze` — Reverse-engineer a .gitignore
+
+```bash
+ignorekit analyze ./.gitignore
+ignorekit analyze ./.gitignore --suggest-preset
+```
+
+Matches lines against known components, shows coverage, identifies custom rules, and suggests the best preset.
+
+### `extract` — Create a reusable component
+
+```bash
+ignorekit extract component local/custom --from ./.gitignore    # smart: only unmatched lines
+ignorekit extract component local/runtime --from ./.gitignore --full  # entire file
+```
+
+Analyzes the `.gitignore` first, then extracts only the lines not covered by any known component.
+
+### `preset` — Create a preset definition
+
+```bash
+ignorekit preset create my-stack --component language/java --component language/node
+ignorekit preset create java-extended --base java-gradle --component local/custom
+```
+
+## Project config
+
+Projects use `ignorekit.json`:
 
 ```json
 {
   "version": 1,
-  "name": "veto",
+  "name": "my-project",
   "preset": "java-gradle",
+  "components": ["local/ai-codegraph"],
   "custom": [
-    "/vault/",
-    "/audit/",
-    "/models/",
-    "*.gguf"
+    "MIGRATION.md",
+    "src/main/resources/application-local.yml"
   ]
 }
 ```
 
-Project config lives in `<project>/ignorekit.json`.
+- `preset` — base project type template
+- `components` — extra components on top of the preset
+- `custom` — project-specific patterns (always the last section in the generated file)
 
-## Commands
+## Components
 
-```bash
-# List available components and presets
-ignorekit list
-ignorekit list components
-ignorekit list presets
+| Category | Components |
+|----------|-----------|
+| Platform | `platform/macos`, `platform/windows` |
+| Editor | `editor/jetbrains`, `editor/vscode`, `editor/temporary-files`, `editor/java-ide-metadata` |
+| Language | `language/java`, `language/node` |
+| Build | `build/gradle`, `build/maven` |
+| Framework | `framework/vite` |
+| Domain | `domain/scientific-artifacts` |
+| Local | `local/env-secrets`, `local/logs` |
+| AI tools | `local/ai-claude`, `local/ai-gemini`, `local/ai-codex`, `local/ai-codegraph` |
 
-# Generate .gitignore from a project config (pure, no Git side effects)
-ignorekit generate ./ignorekit.json
+AI tool components are opt-in — only `local/ai-claude` is included in presets by default. Add others as extra components in your `ignorekit.json`.
 
-# Initialize a new project
-ignorekit init ./my-app --preset java-gradle --git
-ignorekit init ./web-app --preset frontend-vite --no-git
-
-# Adopt an existing project
-ignorekit adopt ./existing-project --preset java-gradle
-ignorekit adopt ./existing-project --preset java-gradle --apply
-
-# Extract a reusable component from an existing .gitignore
-ignorekit extract component local/runtime --from ./project/.gitignore
-
-# Create a new preset
-ignorekit preset create java-gradle-extended --base java-gradle --component local/runtime
-```
-
-Run `ignorekit help <command>` for detailed usage of any command.
-
-## Running Tests
+## Running tests
 
 ```bash
 npm run test:unit
 ```
-
-## Policy Notes
-
-- Keep build wrappers trackable, especially `gradle/wrapper/gradle-wrapper.jar`.
-- Keep frontend lockfiles trackable.
-- Do not hide broad source categories like all Markdown files unless a project has an explicit local-only reason.
-- Put personal machine/editor noise in a global Git excludes file when it does not belong to the team.

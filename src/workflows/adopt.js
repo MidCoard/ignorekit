@@ -127,6 +127,20 @@ async function runAdoptWorkflow(options, env) {
   // Build and write config
   const config = buildProjectConfig(path.basename(projectPath), options);
 
+  // Carry over unmatched lines from analysis as custom rules
+  if (analysis && analysis.unmatchedLines.length > 0) {
+    // Deduplicate (some .gitignore files have the same rule twice)
+    const seen = new Set();
+    const customRules = [];
+    for (const line of analysis.unmatchedLines) {
+      if (!seen.has(line)) {
+        seen.add(line);
+        customRules.push(line);
+      }
+    }
+    config.custom = customRules;
+  }
+
   const configPath = path.join(projectPath, 'ignorekit.json');
   if (fs.existsSync(configPath) && !options.overwriteConfig) {
     throw new Error(`Config already exists: ${configPath}. Use --overwrite-config to replace.`);

@@ -20,6 +20,16 @@ function parseSignificantLines(content) {
 }
 
 /**
+ * Normalize a gitignore pattern for matching purposes.
+ * Strips trailing slashes so 'logs' and 'logs/' compare as equal.
+ * @param {string} line
+ * @returns {string}
+ */
+function normalizePattern(line) {
+  return line.replace(/\/+$/, '');
+}
+
+/**
  * Compute match result for a component against input lines.
  * @param {Set<string>} inputLines - Normalized significant lines from the input .gitignore
  * @param {string} componentContent - Raw content of the component
@@ -27,10 +37,15 @@ function parseSignificantLines(content) {
  */
 function matchComponent(inputLines, componentContent) {
   const componentLines = parseSignificantLines(componentContent);
+  // Build a normalized lookup set from input lines
+  const normalizedInput = new Set();
+  for (const line of inputLines) {
+    normalizedInput.add(normalizePattern(line));
+  }
   const matched = [];
   const unmatched = [];
   for (const line of componentLines) {
-    if (inputLines.has(line)) {
+    if (normalizedInput.has(normalizePattern(line))) {
       matched.push(line);
     } else {
       unmatched.push(line);
@@ -144,16 +159,19 @@ function analyzeGitignore(options) {
     return b.ratio - a.ratio;
   });
 
-  // Compute matched lines coverage
-  const allMatchedLines = new Set();
+  // Compute matched lines coverage (use normalized patterns for dedup)
+  const allMatchedNormalized = new Set();
   for (const comp of matchedComponents) {
     for (const line of comp.matched) {
-      allMatchedLines.add(line);
+      allMatchedNormalized.add(normalizePattern(line));
     }
   }
 
-  // Compute unmatched lines
-  const unmatchedLines = inputLines.filter(line => !allMatchedLines.has(line));
+  // Compute unmatched lines (using normalized comparison)
+  const unmatchedLines = inputLines.filter(line => !allMatchedNormalized.has(normalizePattern(line)));
+
+  // Coverage calculation (use matched count from components)
+  const totalMatchedCount = matchedComponents.reduce((sum, c) => sum + c.matched.length, 0);
 
   // Preset scoring
   const allPresets = [];
@@ -268,4 +286,4 @@ function runAnalyzeWorkflow(options, env) {
   };
 }
 
-module.exports = { runAnalyzeWorkflow, analyzeGitignore, parseSignificantLines, matchComponent, classifyMatch, scorePreset };
+module.exports = { runAnalyzeWorkflow, analyzeGitignore, parseSignificantLines, normalizePattern, matchComponent, classifyMatch, scorePreset };
