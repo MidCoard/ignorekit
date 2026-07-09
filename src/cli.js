@@ -3,21 +3,24 @@
 const fs = require('fs');
 const path = require('path');
 const { readJson } = require('./core/json');
+const { listDefinitions } = require('./core/fs');
+const { DIST_ROOT } = require('./core/path');
+const { normalizeProjectConfig } = require('./config/project-config');
 const { createDefinitionResolver } = require('./definitions/resolver');
 const { generateGitignore } = require('./generator');
 const { runInitWorkflow } = require('./workflows/init');
 const { runAdoptWorkflow } = require('./workflows/adopt');
 const { runExtractComponent } = require('./workflows/extract');
 const { runPresetCreate } = require('./workflows/preset');
-
-const DIST_ROOT = path.resolve(__dirname, '..');
+const { runExplainWorkflow } = require('./workflows/explain');
+const { runAnalyzeWorkflow } = require('./workflows/analyze');
 
 // --- Argument parsing ---
 
 const BOOLEAN_OPTIONS = new Set([
   'all', 'yes', 'git', 'noGit', 'dryRun', 'preview',
   'overwrite', 'overwriteConfig', 'removeCached',
-  'allowNestedGit', 'apply'
+  'allowNestedGit', 'apply', 'verbose', 'suggestPreset', 'full'
 ]);
 
 function parseArgs(args) {
@@ -64,6 +67,8 @@ Usage:
 Commands:
   list        List available components, presets
   generate    Generate .gitignore from a project config
+  explain     Explain what an ignorekit.json config produces
+  analyze     Analyze a .gitignore against known components
   init        Initialize a new project with config and .gitignore
   adopt       Adopt an existing project into ignorekit
   extract     Extract a reusable component from an existing .gitignore
@@ -168,14 +173,61 @@ Arguments:
   --from      Path to the source .gitignore file (required)
 
 Options:
-  --output-root <path>   Output directory (default: .ignorekit)
+  --full                  Extract entire .gitignore without analysis (legacy mode)
+  --output-root <path>    Output directory (default: .ignorekit)
+  --dist-root <path>      Root directory for shipped definitions
+  --user-root <path>      User-level override directory
+  --workspace-root <path> Workspace-level definition directory
 
-Reads an existing .gitignore and writes it as a reusable component
-that can be referenced by presets or project configs.
+By default, extract first analyzes the .gitignore against known components,
+then extracts only the unmatched (custom) rules as a new component.
+Use --full to skip analysis and extract the entire file.
 
 Examples:
   ignorekit extract component local/runtime --from ./my-project/.gitignore
-  ignorekit extract component local/custom --from ./.gitignore --output-root .ignorekit
+  ignorekit extract component local/custom --from ./.gitignore --full
+`,
+    explain: `ignorekit explain - Explain what an ignorekit.json config produces
+
+Usage:
+  ignorekit explain <config> [options]
+
+Arguments:
+  config    Path to ignorekit.json
+
+Options:
+  --verbose               Show full component content (not just summary)
+  --dist-root <path>      Root directory for shipped definitions
+  --user-root <path>      User-level override directory
+  --workspace-root <path> Workspace-level definition directory
+
+Shows which components the preset brings, what each component contributes,
+and what custom rules are project-specific. Like MySQL EXPLAIN for gitignore.
+
+Examples:
+  ignorekit explain ./ignorekit.json
+  ignorekit explain ./ignorekit.json --verbose
+`,
+    analyze: `ignorekit analyze - Analyze a .gitignore against known components
+
+Usage:
+  ignorekit analyze <gitignore-path> [options]
+
+Arguments:
+  gitignore-path    Path to the .gitignore file to analyze
+
+Options:
+  --suggest-preset       Suggest the best-matching preset
+  --dist-root <path>    Root directory for shipped definitions
+  --user-root <path>    User-level override directory
+  --workspace-root <path> Workspace-level definition directory
+
+Matches lines in the .gitignore against known components, identifies
+what is covered and what is custom, and optionally suggests a preset.
+
+Examples:
+  ignorekit analyze ./.gitignore
+  ignorekit analyze ./.gitignore --suggest-preset
 `,
     preset: `ignorekit preset - Create a new preset definition
 
@@ -236,28 +288,6 @@ function commandList(args, env) {
   }
 }
 
-function listDefinitions(directory, extension) {
-  if (!fs.existsSync(directory)) return [];
-  return walkFiles(directory)
-    .filter((file) => file.endsWith(extension))
-    .map((file) => path.relative(directory, file).replace(/\\/g, '/').replace(new RegExp(`\\${extension}$`), ''))
-    .sort();
-}
-
-function walkFiles(directory) {
-  const entries = fs.readdirSync(directory, { withFileTypes: true });
-  const files = [];
-  for (const entry of entries) {
-    const fullPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...walkFiles(fullPath));
-    } else if (entry.isFile()) {
-      files.push(fullPath);
-    }
-  }
-  return files;
-}
-
 // --- Generate command ---
 
 function createResolverFromOptions(options, configPath) {
@@ -277,7 +307,13 @@ async function commandGenerate(args, env) {
     throw new Error('generate requires a config path');
   }
   const absoluteConfigPath = path.resolve(env.cwd || process.cwd(), configPath);
-  const config = readJson(absoluteConfigPath);
+  const rawConfig = readJson(absoluteConfigPath);
+  let config;
+  try {
+    config = normalizeProjectConfig(rawConfig);
+  } catch (err) {
+    throw new Error(`Invalid config ${absoluteConfigPath}: ${err.message}`);
+  }
   const resolver = createResolverFromOptions(options, absoluteConfigPath);
   const content = await generateGitignore({ config, resolver });
   const outputPath = path.resolve(path.dirname(absoluteConfigPath), options.output || '.gitignore');
@@ -286,6 +322,8 @@ async function commandGenerate(args, env) {
 }
 
 // --- Command dispatch ---
+// review #13 by-design: runCli uses a sequential if/else dispatch block.
+// Future refactor target: extract to a command registry pattern for extensibility.
 
 async function runCli(args, env = {}) {
   const stdout = env.stdout || process.stdout;
@@ -316,6 +354,28 @@ async function runCli(args, env = {}) {
       return { exitCode: 0 };
     }
 
+    // Explain
+    if (command === 'explain') {
+      const options = parseArgs(args.slice(1));
+      options.configPath = options._[0];
+      if (!options.configPath) {
+        throw new Error('explain requires a config path');
+      }
+      runExplainWorkflow(options, { stdout, stderr, cwd: env.cwd });
+      return { exitCode: 0 };
+    }
+
+    // Analyze
+    if (command === 'analyze') {
+      const options = parseArgs(args.slice(1));
+      options.gitignorePath = options._[0];
+      if (!options.gitignorePath) {
+        throw new Error('analyze requires a .gitignore path');
+      }
+      runAnalyzeWorkflow(options, { stdout, stderr, cwd: env.cwd });
+      return { exitCode: 0 };
+    }
+
     // Init
     if (command === 'init') {
       const options = parseArgs(args.slice(1));
@@ -330,6 +390,7 @@ async function runCli(args, env = {}) {
       if (options.noGit) {
         options.git = false;
       }
+      options.templates = collectRepeated(args.slice(1), '--template');
       const result = await runInitWorkflow(options, { cwd: env.cwd });
       stdout.write(`Initialized ignorekit project at ${result.projectPath}\n`);
       return { exitCode: 0 };
@@ -345,7 +406,8 @@ async function runCli(args, env = {}) {
       if (!options.preset) {
         throw new Error('adopt requires --preset');
       }
-      const result = await runAdoptWorkflow(options, { cwd: env.cwd });
+      options.templates = collectRepeated(args.slice(1), '--template');
+      const result = await runAdoptWorkflow(options, { stdout, stderr, cwd: env.cwd });
       stdout.write(`Adopted ignorekit project at ${result.projectPath}\n`);
       return { exitCode: 0 };
     }
@@ -358,8 +420,10 @@ async function runCli(args, env = {}) {
       }
       const options = parseArgs(args.slice(2));
       options.id = options._[0];
-      const result = runExtractComponent(options, { cwd: env.cwd });
-      stdout.write(`Created component ${result.outputPath}\n`);
+      const result = runExtractComponent(options, { stdout, stderr, cwd: env.cwd });
+      if (result.outputPath) {
+        stdout.write(`Created component ${result.outputPath}\n`);
+      }
       return { exitCode: 0 };
     }
 

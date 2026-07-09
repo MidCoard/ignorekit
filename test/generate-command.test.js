@@ -45,3 +45,27 @@ test('generate requires a config path', async () => {
   assert.equal(result.exitCode, 1);
   assert.match(errors.join(''), /generate requires a config path/);
 });
+
+test('generate with invalid config produces error containing file path', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    const configPath = workspace.writeJson('project/ignorekit.json', {
+      version: 99,
+      name: 'bad'
+    });
+
+    const errors = [];
+    const result = await runCli(['generate', configPath], {
+      stdout: { write: () => {} },
+      stderr: { write: (text) => errors.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 1);
+    const errorOutput = errors.join('');
+    assert.match(errorOutput, /Invalid config/);
+    assert.match(errorOutput, /ignorekit\.json/);
+  } finally {
+    workspace.cleanup();
+  }
+});

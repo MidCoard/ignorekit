@@ -3,12 +3,11 @@
 const fs = require('fs');
 const path = require('path');
 const { writeJson } = require('../core/json');
+const { DIST_ROOT } = require('../core/path');
 const { buildProjectConfig } = require('../config/build-config');
 const { createDefinitionResolver } = require('../definitions/resolver');
 const { generateGitignore } = require('../generator');
 const { ensureGitRepo } = require('../git');
-
-const DEFAULT_DIST_ROOT = path.resolve(__dirname, '..', '..');
 
 async function runInitWorkflow(options, env) {
   const projectPath = path.resolve(env.cwd || process.cwd(), options.projectPath);
@@ -23,7 +22,7 @@ async function runInitWorkflow(options, env) {
   writeJson(configPath, config);
 
   const resolver = createDefinitionResolver({
-    distRoot: options.distRoot || DEFAULT_DIST_ROOT,
+    distRoot: options.distRoot || DIST_ROOT,
     userRoot: options.userRoot,
     workspaceRoot: options.workspaceRoot,
     projectRoot: projectPath

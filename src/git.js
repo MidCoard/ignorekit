@@ -55,14 +55,20 @@ function removeCachedFiles(projectPath, files, options = {}) {
   if (options.dryRun) {
     return { action: 'dry-run', files };
   }
-  const result = childProcess.spawnSync('git', ['rm', '--cached', '--', ...files], {
-    cwd: projectPath,
-    encoding: 'utf8'
-  });
-  if (result.status !== 0) {
-    throw new Error(result.stderr || 'git rm --cached failed');
+  const BATCH = 500;
+  const removed = [];
+  for (let i = 0; i < files.length; i += BATCH) {
+    const batch = files.slice(i, i + BATCH);
+    const result = childProcess.spawnSync('git', ['rm', '--cached', '--', ...batch], {
+      cwd: projectPath,
+      encoding: 'utf8'
+    });
+    if (result.status !== 0) {
+      throw new Error(result.stderr || 'git rm --cached failed');
+    }
+    removed.push(...batch);
   }
-  return { action: 'removed', files };
+  return { action: 'removed', files: removed };
 }
 
 module.exports = { getGitState, ensureGitRepo, listTrackedIgnoredFiles, removeCachedFiles };

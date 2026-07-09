@@ -9,9 +9,11 @@ const situationsDir = path.join(repoRoot, 'examples', 'situations');
 const componentsDir = path.join(repoRoot, 'components');
 const presetsDir = path.join(repoRoot, 'presets');
 
+const { listDefinitions: listDefinitionsArray } = require('../src/core/fs');
+
 const workflows = new Set(['init', 'adopt', 'generate', 'extract', 'preset-create']);
 const addonTypes = new Set(['ensureDirectory', 'ensureGitRepo', 'removeCachedIgnoredFiles']);
-const providerNames = new Set(['local', 'gitignore.io', 'gibo']);
+const providerNames = new Set(['local', 'gitignore.io']);
 
 main();
 
@@ -145,12 +147,6 @@ function validateConfig(data, label, context) {
   if (Array.isArray(config.components)) {
     for (const component of config.components) {
       assertComponent(component, `${label}: config.components`, context, data);
-    }
-  }
-
-  if (Array.isArray(config.localComponents)) {
-    for (const component of config.localComponents) {
-      assertComponent(component, `${label}: config.localComponents`, context, data);
     }
   }
 
@@ -302,36 +298,6 @@ function assertComponent(component, location, context, data) {
 }
 
 function listDefinitions(directory, extension) {
-  const definitions = new Set();
-  if (!fs.existsSync(directory)) {
-    return definitions;
-  }
-
-  for (const file of walk(directory)) {
-    if (!file.endsWith(extension)) {
-      continue;
-    }
-
-    const relative = path.relative(directory, file).replace(/\\/g, '/');
-    definitions.add(relative.slice(0, -extension.length));
-  }
-
-  return definitions;
-}
-
-function walk(directory) {
-  const entries = fs.readdirSync(directory, { withFileTypes: true });
-  const files = [];
-
-  for (const entry of entries) {
-    const fullPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...walk(fullPath));
-    } else if (entry.isFile()) {
-      files.push(fullPath);
-    }
-  }
-
-  return files;
+  return new Set(listDefinitionsArray(directory, extension));
 }
 

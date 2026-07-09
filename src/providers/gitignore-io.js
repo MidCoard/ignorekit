@@ -7,11 +7,14 @@ function fetchGitignoreIoTemplates(templates) {
   const url = `https://www.toptal.com/developers/gitignore/api/${encoded}`;
 
   return new Promise((resolve, reject) => {
-    https.get(url, (response) => {
+    const req = https.get(url, { timeout: 10000 }, (response) => {
       let body = '';
       response.setEncoding('utf8');
       response.on('data', (chunk) => {
         body += chunk;
+        if (body.length > 1024 * 1024) {
+          req.destroy(new Error('gitignore.io response too large'));
+        }
       });
       response.on('end', () => {
         if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -20,7 +23,12 @@ function fetchGitignoreIoTemplates(templates) {
         }
         resolve(body);
       });
-    }).on('error', reject);
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('gitignore.io request timed out'));
+    });
+    req.on('error', reject);
   });
 }
 

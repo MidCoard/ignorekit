@@ -58,3 +58,49 @@ test('defaults components and custom to empty arrays', () => {
 test('rejects config without a name', () => {
   assert.throws(() => normalizeProjectConfig({ version: 1 }), /config.name is required/);
 });
+
+test('buildProjectConfig includes provider.templates when provider is not local and templates are provided', () => {
+  const { buildProjectConfig } = require('../src/config/build-config');
+  const config = buildProjectConfig('demo', { provider: 'gitignore.io', templates: ['Node', 'Python'] });
+  assert.deepEqual(config.provider, { name: 'gitignore.io', templates: ['Node', 'Python'] });
+});
+
+test('buildProjectConfig omits provider.templates when provider is local', () => {
+  const { buildProjectConfig } = require('../src/config/build-config');
+  const config = buildProjectConfig('demo', { provider: 'local', templates: ['Node'] });
+  assert.deepEqual(config.provider, { name: 'local' });
+});
+
+test('buildProjectConfig omits provider.templates when templates array is empty', () => {
+  const { buildProjectConfig } = require('../src/config/build-config');
+  const config = buildProjectConfig('demo', { provider: 'gitignore.io', templates: [] });
+  assert.deepEqual(config.provider, { name: 'gitignore.io' });
+});
+
+test('fetchGitignoreIoTemplates rejects on timeout', async () => {
+  const EventEmitter = require('events');
+  const https = require('https');
+  const origGet = https.get;
+
+  https.get = function mockGet(url, options, callback) {
+    const req = new EventEmitter();
+    req.destroy = () => {};
+    // Simulate timeout on next tick
+    process.nextTick(() => req.emit('timeout'));
+    return req;
+  };
+
+  try {
+    const { fetchGitignoreIoTemplates } = require('../src/providers/gitignore-io');
+    delete require.cache[require.resolve('../src/providers/gitignore-io')];
+    const fresh = require('../src/providers/gitignore-io');
+
+    await assert.rejects(
+      fresh.fetchGitignoreIoTemplates(['Node']),
+      /timed out/
+    );
+  } finally {
+    https.get = origGet;
+    delete require.cache[require.resolve('../src/providers/gitignore-io')];
+  }
+});

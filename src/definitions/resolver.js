@@ -16,10 +16,11 @@ function createDefinitionResolver(options = {}) {
   function findDefinition(kind, id, extension) {
     assertDefinitionId(id);
     for (const root of [...layers].reverse()) {
-      const filePath = resolveInside(root, path.join(kind, `${id}${extension}`));
-      if (fs.existsSync(filePath)) {
+      try {
+        const filePath = resolveInside(root, path.join(kind, `${id}${extension}`));
+        fs.readFileSync(filePath, 'utf8');
         return filePath;
-      }
+      } catch { continue; }
     }
     throw new Error(`Unknown ${kind.slice(0, -1)}: ${id}`);
   }
