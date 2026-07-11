@@ -2,12 +2,13 @@
 
 const fs = require('fs');
 const path = require('path');
-const { assertDefinitionId, resolveInside } = require('../core/path');
+const { listDefinitions } = require('../core/fs');
+const { assertDefinitionId, resolveInside, USER_ROOT } = require('../core/path');
 
 function createDefinitionResolver(options = {}) {
   const layers = [
     options.distRoot,
-    options.userRoot,
+    options.userRoot === undefined ? USER_ROOT : options.userRoot,
     options.workspaceRoot,
     options.projectRoot
   ].filter(Boolean);
@@ -22,6 +23,16 @@ function createDefinitionResolver(options = {}) {
       } catch { continue; }
     }
     throw new Error(`Unknown ${kind.slice(0, -1)}: ${id}`);
+  }
+
+  function listDefinitionIds(kind, extension) {
+    const ids = new Set();
+    for (const root of layers) {
+      for (const id of listDefinitions(path.join(root, kind), extension)) {
+        ids.add(id);
+      }
+    }
+    return [...ids].sort();
   }
 
   return {
@@ -50,6 +61,12 @@ function createDefinitionResolver(options = {}) {
         if (error.message.startsWith('Unknown preset')) return false;
         throw error;
       }
+    },
+    listComponents() {
+      return listDefinitionIds('components', '.gitignore');
+    },
+    listPresets() {
+      return listDefinitionIds('presets', '.json');
     }
   };
 }

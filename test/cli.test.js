@@ -118,6 +118,30 @@ test('list components shows only components', async () => {
   }
 });
 
+test('list includes configured user definitions', async () => {
+  const workspace = createListFixture();
+  try {
+    workspace.writeText('user/components/local/personal.gitignore', 'personal/\n');
+    workspace.writeJson('user/presets/personal.json', { name: 'personal', components: [] });
+
+    const writes = [];
+    const result = await runCli([
+      'list', '--dist-root', workspace.path('dist'), '--user-root', workspace.path('user')
+    ], {
+      stdout: { write: (text) => writes.push(String(text)) },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    const output = writes.join('');
+    assert.match(output, /local\/personal/);
+    assert.match(output, /personal/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('list rejects unknown targets', async () => {
   const errors = [];
   const result = await runCli(['list', 'invalid'], {

@@ -10,9 +10,8 @@ function normalizeText(value) {
  * @returns {string[]}
  */
 function parseSignificantLines(content) {
-  return normalizeText(content).split('\n')
-    .map(line => line.trim())
-    .filter(line => line.length > 0 && !line.startsWith('#'));
+  return String(content).replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
+    .filter(line => line.trim().length > 0 && !line.startsWith('#'));
 }
 
 module.exports = { normalizeText, parseSignificantLines };

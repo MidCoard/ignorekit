@@ -38,6 +38,9 @@ async function runAdoptWorkflow(options, env) {
   if (!fs.existsSync(projectPath)) {
     throw new Error(`Project path does not exist: ${projectPath}`);
   }
+  if (options.removeCached && !options.apply) {
+    throw new Error('--remove-cached requires --apply so Git uses the generated .gitignore');
+  }
 
   const distRoot = options.distRoot || DIST_ROOT;
   const warnings = [];
@@ -77,7 +80,7 @@ async function runAdoptWorkflow(options, env) {
       distRoot,
       userRoot: options.userRoot,
       workspaceRoot: options.workspaceRoot,
-      projectRoot: projectPath
+      projectRoot: path.join(projectPath, '.ignorekit')
     });
 
     try {
@@ -144,36 +147,20 @@ async function runAdoptWorkflow(options, env) {
   if (fs.existsSync(configPath) && !options.overwriteConfig) {
     throw new Error(`Config already exists: ${configPath}. Use --overwrite-config to replace.`);
   }
-  writeJson(configPath, config);
-
   // Generate .gitignore
   const resolver = createDefinitionResolver({
     distRoot,
     userRoot: options.userRoot,
     workspaceRoot: options.workspaceRoot,
-    projectRoot: projectPath
+    projectRoot: path.join(projectPath, '.ignorekit')
   });
   const gitignore = await generateGitignore({ config, resolver });
   const outputName = options.apply ? '.gitignore' : '.gitignore.preview';
   const outputLabel = options.apply ? '.gitignore' : '.gitignore.preview';
+  writeJson(configPath, config);
   fs.writeFileSync(path.join(projectPath, outputName), gitignore, 'utf8');
 
   stdout.write(`Generated ${outputLabel}\n`);
-
-  // In preview mode, ensure .gitignore.preview is listed in .gitignore
-  // so it doesn't get accidentally tracked
-  if (!options.apply) {
-    const existingGitignorePath = path.join(projectPath, '.gitignore');
-    if (fs.existsSync(existingGitignorePath)) {
-      const existing = fs.readFileSync(existingGitignorePath, 'utf8');
-      if (!existing.split('\n').some(line => line.trim() === '.gitignore.preview')) {
-        fs.appendFileSync(existingGitignorePath, '\n.gitignore.preview\n', 'utf8');
-      }
-    } else {
-      // No .gitignore exists — create one that ignores the preview file
-      fs.writeFileSync(existingGitignorePath, '.gitignore.preview\n', 'utf8');
-    }
-  }
 
   // Handle cached file removal
   let cachedRemoval = { action: 'skipped', files: [] };

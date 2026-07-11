@@ -3,7 +3,6 @@
 const fs = require('fs');
 const path = require('path');
 const { readJson } = require('./core/json');
-const { listDefinitions } = require('./core/fs');
 const { DIST_ROOT } = require('./core/path');
 const { normalizeProjectConfig } = require('./config/project-config');
 const { createDefinitionResolver, resolvePresetChain } = require('./definitions/resolver');
@@ -88,6 +87,10 @@ Usage:
 Arguments:
   target    What to list: components, presets (default: both)
 
+Options:
+  --user-root <path>      User definition directory (default: ~/.ignorekit)
+  --workspace-root <path> Workspace definition directory
+
 Examples:
   ignorekit list
   ignorekit list components
@@ -127,8 +130,10 @@ Options:
   --provider <name>      Provider name: local (default) or gitignore.io
   --git                  Run git init in the project directory
   --no-git               Skip git init (default)
-  --overwrite            Overwrite an existing ignorekit.json
+  --overwrite            Replace existing ignorekit.json and .gitignore
   --dist-root <path>     Root directory for shipped definitions
+  --user-root <path>     User-level definition directory
+  --workspace-root <path> Workspace-level definition directory
   --allow-nested-git     Allow initializing a nested Git repo
 
 Creates an ignorekit.json config and generates a .gitignore.
@@ -138,7 +143,7 @@ based on any existing .gitignore in the project.
 Examples:
   ignorekit init                          # interactive: pick preset, use current dir
   ignorekit init ./my-app --preset java-gradle --git
-  ignorekit init ./web-app --preset frontend-vite --no-git
+  ignorekit init ./web-app --preset vite --no-git
 `,
     adopt: `ignorekit adopt - Adopt an existing project into ignorekit
 
@@ -156,17 +161,20 @@ Options:
   --remove-cached        Remove Git-tracked files that should be ignored
   --yes                  Confirm removal without prompt (use with --remove-cached)
   --dist-root <path>     Root directory for shipped definitions
+  --user-root <path>     User-level definition directory
+  --workspace-root <path> Workspace-level definition directory
 
 If --preset is omitted, analyzes any existing .gitignore and suggests
 the best-matching preset interactively.
 
 By default, adopt writes a .gitignore.preview file so you can review before
-applying. Use --apply to overwrite .gitignore directly.
+applying without changing .gitignore. Use --apply to overwrite .gitignore directly. --remove-cached also
+requires --apply, so Git always evaluates the generated rules.
 
 Examples:
   ignorekit adopt                           # interactive: analyze, pick preset
   ignorekit adopt --preset java-gradle      # use current directory with this preset
-  ignorekit adopt ./project --preset frontend-vite --apply
+  ignorekit adopt ./project --preset vite --apply
 `,
     extract: `ignorekit extract - Extract a reusable component from .gitignore
 
@@ -278,12 +286,16 @@ function commandList(args, env) {
   const distRoot = options.distRoot || DIST_ROOT;
   const stdout = env.stdout || process.stdout;
 
-  const componentsDir = path.join(distRoot, 'components');
-  const presetsDir = path.join(distRoot, 'presets');
+  const resolver = createDefinitionResolver({
+    distRoot,
+    userRoot: options.userRoot,
+    workspaceRoot: options.workspaceRoot,
+    projectRoot: path.join(env.cwd || process.cwd(), '.ignorekit')
+  });
 
   if (target === 'all' || target === 'components') {
     if (target === 'all') stdout.write('Components:\n');
-    for (const component of listDefinitions(componentsDir, '.gitignore')) {
+    for (const component of resolver.listComponents()) {
       stdout.write(`  ${component}\n`);
     }
   }
@@ -291,8 +303,7 @@ function commandList(args, env) {
   if (target === 'all' || target === 'presets') {
     if (target === 'all') stdout.write('\n');
     stdout.write('Presets:\n');
-    const resolver = createDefinitionResolver({ distRoot });
-    for (const preset of listDefinitions(presetsDir, '.json')) {
+    for (const preset of resolver.listPresets()) {
       try {
         const chain = resolvePresetChain(resolver, preset);
         if (chain.length > 1) {
@@ -320,7 +331,7 @@ function createResolverFromOptions(options, configPath) {
     distRoot: options.distRoot || DIST_ROOT,
     userRoot: options.userRoot,
     workspaceRoot: options.workspaceRoot,
-    projectRoot
+    projectRoot: path.join(projectRoot, '.ignorekit')
   });
 }
 
@@ -386,11 +397,14 @@ async function pickPresetInteractive(options, env) {
   }
 
   // List all presets for the user to pick
-  const presetsDir = path.join(distRoot, 'presets');
-  let presetIds;
-  try {
-    presetIds = listDefinitions(presetsDir, '.json');
-  } catch {
+  const resolver = createDefinitionResolver({
+    distRoot,
+    userRoot: options.userRoot,
+    workspaceRoot: options.workspaceRoot,
+    projectRoot: path.join(projectPath, '.ignorekit')
+  });
+  const presetIds = resolver.listPresets();
+  if (presetIds.length === 0) {
     stdout.write('No presets available.\n');
     return null;
   }

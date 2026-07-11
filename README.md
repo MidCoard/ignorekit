@@ -77,7 +77,7 @@ ignorekit adopt --preset java-gradle --apply      # overwrite .gitignore directl
 ignorekit adopt --preset node --exclude platform/windows
 ```
 
-Adopt analyzes your existing `.gitignore`, shows what's already covered by components, carries over custom rules, and generates a `.gitignore.preview` for review.
+Adopt analyzes your existing `.gitignore`, shows what's already covered by components, carries over custom rules, and generates a `.gitignore.preview` for review without changing the current `.gitignore`.
 
 ### `generate` — Build .gitignore from config
 
@@ -145,6 +145,18 @@ Projects use `ignorekit.json`:
 - `exclude` — components from the preset chain to omit (e.g., `platform/windows` on a Windows-only team)
 - `custom` — project-specific patterns (always the last section in the generated file)
 
+## Reusable definitions
+
+`ignorekit extract` and `ignorekit preset create` save reusable definitions to
+`~/.ignorekit` by default. They are picked up automatically by every command,
+so a new `local/runtime` component or `team-stack` preset can be used straight
+away without extra flags.
+
+For a definition that belongs only to one repository, store it in
+`<project>/.ignorekit/components/` or `<project>/.ignorekit/presets/`. Commands
+run from that project discover it automatically. Use `--workspace-root` when a
+team shares definitions from another directory.
+
 ## Components
 
 | Category | Components |
@@ -166,4 +178,5 @@ AI tool components are opt-in — only `local/ai-claude` is included in presets 
 
 ```bash
 npm run test:unit
+npm run validate:situations
 ```

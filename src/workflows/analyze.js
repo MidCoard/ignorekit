@@ -3,19 +3,19 @@
 const fs = require('fs');
 const path = require('path');
 const { readJson } = require('../core/json');
-const { normalizeText, parseSignificantLines } = require('../core/text');
-const { listDefinitions } = require('../core/fs');
+const { parseSignificantLines } = require('../core/text');
 const { createDefinitionResolver, resolvePresetComponents } = require('../definitions/resolver');
 const { DIST_ROOT } = require('../core/path');
 
 /**
  * Normalize a gitignore pattern for matching purposes.
- * Strips trailing slashes so 'logs' and 'logs/' compare as equal.
+ * Keeps Git's pattern syntax intact. Directory-only patterns, escaped spaces,
+ * and escaped comments have semantics that must not be normalized away.
  * @param {string} line
  * @returns {string}
  */
 function normalizePattern(line) {
-  return line.replace(/\/+$/, '');
+  return line;
 }
 
 /**
@@ -152,12 +152,11 @@ function analyzeGitignore(options) {
     distRoot,
     userRoot: options.userRoot,
     workspaceRoot: options.workspaceRoot,
-    projectRoot: path.dirname(gitignorePath)
+    projectRoot: path.join(path.dirname(gitignorePath), '.ignorekit')
   });
 
   // Load all components and match
-  const componentsDir = path.join(distRoot, 'components');
-  const componentIds = listDefinitions(componentsDir, '.gitignore');
+  const componentIds = resolver.listComponents();
   const componentResults = new Map();
 
   for (const id of componentIds) {
@@ -205,8 +204,7 @@ function analyzeGitignore(options) {
   // Preset scoring
   const allPresets = [];
   try {
-    const presetsDir = path.join(distRoot, 'presets');
-    const presetIds = listDefinitions(presetsDir, '.json');
+    const presetIds = resolver.listPresets();
     for (const presetId of presetIds) {
       try {
         const presetComponents = resolvePresetComponents(resolver, presetId);

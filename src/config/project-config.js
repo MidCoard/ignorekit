@@ -1,5 +1,18 @@
 'use strict';
 
+function normalizeStringArray(value, field) {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`config.${field} must be an array`);
+  }
+  if (value.some(entry => typeof entry !== 'string')) {
+    throw new Error(`config.${field} must contain only strings`);
+  }
+  return value;
+}
+
 function normalizeProjectConfig(input) {
   if (!input || typeof input !== 'object') {
     throw new Error('config must be an object');
@@ -9,6 +22,9 @@ function normalizeProjectConfig(input) {
   }
   if (!input.name || typeof input.name !== 'string') {
     throw new Error('config.name is required');
+  }
+  if (input.preset !== undefined && typeof input.preset !== 'string') {
+    throw new Error('config.preset must be a string');
   }
 
   const provider = input.provider || { name: 'local' };
@@ -24,9 +40,9 @@ function normalizeProjectConfig(input) {
     name: input.name,
     preset: input.preset,
     provider,
-    components: Array.isArray(input.components) ? input.components : [],
-    exclude: Array.isArray(input.exclude) ? input.exclude : [],
-    custom: Array.isArray(input.custom) ? input.custom : [],
+    components: normalizeStringArray(input.components, 'components'),
+    exclude: normalizeStringArray(input.exclude, 'exclude'),
+    custom: normalizeStringArray(input.custom, 'custom'),
     addons: input.addons && typeof input.addons === 'object' ? input.addons : {}
   };
 }

@@ -1,9 +1,12 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const test = require('node:test');
 const { createTempWorkspace } = require('./helpers/temp-workspace');
 const { createDefinitionResolver } = require('../src/definitions/resolver');
+const { USER_ROOT } = require('../src/core/path');
 
 test('resolver reads components from dist, user, workspace, and project layers in priority order', () => {
   const workspace = createTempWorkspace();
@@ -51,6 +54,51 @@ test('resolver hasPreset returns false for missing presets', () => {
   try {
     const resolver = createDefinitionResolver({ distRoot: workspace.path('dist') });
     assert.equal(resolver.hasPreset('nonexistent'), false);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('resolver uses personal definitions when no user root is supplied', () => {
+  const workspace = createTempWorkspace();
+  const id = `local/test-user-default-${process.pid}`;
+  const filePath = path.join(USER_ROOT, 'components', `${id}.gitignore`);
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, 'personal-rule/\n', 'utf8');
+
+    const resolver = createDefinitionResolver({ distRoot: workspace.path('dist') });
+    assert.equal(resolver.readComponent(id), 'personal-rule/\n');
+  } finally {
+    fs.rmSync(filePath, { force: true });
+    workspace.cleanup();
+  }
+});
+
+test('resolver lists definitions from all layers without duplicate ids', () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/shared.gitignore', 'dist/\n');
+    workspace.writeText('user/components/local/shared.gitignore', 'user/\n');
+    workspace.writeText('workspace/components/local/workspace.gitignore', 'workspace/\n');
+    workspace.writeText('project/components/local/project.gitignore', 'project/\n');
+    workspace.writeJson('dist/presets/base.json', { name: 'base', components: [] });
+    workspace.writeJson('user/presets/personal.json', { name: 'personal', components: [] });
+
+    const resolver = createDefinitionResolver({
+      distRoot: workspace.path('dist'),
+      userRoot: workspace.path('user'),
+      workspaceRoot: workspace.path('workspace'),
+      projectRoot: workspace.path('project')
+    });
+
+    assert.deepEqual(resolver.listComponents(), [
+      'local/project',
+      'local/shared',
+      'local/workspace'
+    ]);
+    assert.deepEqual(resolver.listPresets(), ['base', 'personal']);
+    assert.equal(resolver.readComponent('local/shared'), 'user/\n');
   } finally {
     workspace.cleanup();
   }

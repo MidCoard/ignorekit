@@ -57,6 +57,16 @@ test('defaults components and custom to empty arrays', () => {
   assert.deepEqual(config.exclude, []);
 });
 
+test('rejects non-array component fields instead of silently dropping rules', () => {
+  for (const field of ['components', 'exclude', 'custom']) {
+    assert.throws(() => normalizeProjectConfig({
+      version: 1,
+      name: 'demo',
+      [field]: 'not-an-array'
+    }), new RegExp(`config\\.${field} must be an array`));
+  }
+});
+
 test('normalizes exclude field', () => {
   const config = normalizeProjectConfig({
     version: 1,

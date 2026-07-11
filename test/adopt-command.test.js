@@ -145,7 +145,8 @@ test('adopt --remove-cached dry-run prints file list to stdout', async () => {
         projectPath: workspace.path('project'),
         preset: 'demo',
         distRoot: workspace.path('dist'),
-        removeCached: true
+        removeCached: true,
+        apply: true
       }, {
         cwd: workspace.root,
         stdout: { write: (text) => writes.push(String(text)) }
@@ -165,7 +166,32 @@ test('adopt --remove-cached dry-run prints file list to stdout', async () => {
   }
 });
 
-test('adopt preview appends .gitignore.preview to .gitignore', async () => {
+test('adopt refuses cached removal until the generated ignore file is applied', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    workspace.writeText('project/.gitignore', 'old-rule\n');
+
+    const errors = [];
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'demo', '--remove-cached', '--yes',
+      '--dist-root', workspace.path('dist')
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: (text) => errors.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 1);
+    assert.match(errors.join(''), /requires --apply/);
+    assert.equal(fs.existsSync(workspace.path('project/ignorekit.json')), false);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('adopt preview leaves the current .gitignore unchanged', async () => {
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
@@ -191,15 +217,15 @@ test('adopt preview appends .gitignore.preview to .gitignore', async () => {
     // .gitignore.preview should exist
     assert.ok(fs.existsSync(workspace.path('project/.gitignore.preview')), '.gitignore.preview should be created');
 
-    // .gitignore should now contain .gitignore.preview
+    // Preview mode must not edit the existing .gitignore.
     const gitignore = workspace.readText('project/.gitignore');
-    assert.match(gitignore, /\.gitignore\.preview/);
+    assert.equal(gitignore, 'old-rule\n');
   } finally {
     workspace.cleanup();
   }
 });
 
-test('adopt preview does not duplicate .gitignore.preview entry', async () => {
+test('adopt preview preserves an existing .gitignore.preview entry', async () => {
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
@@ -223,16 +249,15 @@ test('adopt preview does not duplicate .gitignore.preview entry', async () => {
 
     assert.equal(result.exitCode, 0);
 
-    // .gitignore should still contain exactly one .gitignore.preview line
+    // Preview mode should preserve the existing file exactly.
     const gitignore = workspace.readText('project/.gitignore');
-    const count = (gitignore.match(/\.gitignore\.preview/g) || []).length;
-    assert.equal(count, 1, 'Should not duplicate .gitignore.preview entry');
+    assert.equal(gitignore, 'old-rule\n.gitignore.preview\n');
   } finally {
     workspace.cleanup();
   }
 });
 
-test('adopt preview creates .gitignore when none exists', async () => {
+test('adopt preview does not create .gitignore when none exists', async () => {
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
@@ -258,10 +283,7 @@ test('adopt preview creates .gitignore when none exists', async () => {
     // .gitignore.preview should exist
     assert.ok(fs.existsSync(workspace.path('project/.gitignore.preview')), '.gitignore.preview should be created');
 
-    // .gitignore should be created with .gitignore.preview entry
-    assert.ok(fs.existsSync(workspace.path('project/.gitignore')), '.gitignore should be created when none exists');
-    const gitignore = workspace.readText('project/.gitignore');
-    assert.match(gitignore, /\.gitignore\.preview/, '.gitignore should contain .gitignore.preview');
+    assert.equal(fs.existsSync(workspace.path('project/.gitignore')), false);
   } finally {
     workspace.cleanup();
   }

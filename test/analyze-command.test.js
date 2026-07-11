@@ -124,6 +124,41 @@ test('parseSignificantLines strips comments and blanks', () => {
   assert.deepEqual(lines, ['.idea/', '*.iml', '*.ipr']);
 });
 
+test('parseSignificantLines preserves gitignore pattern syntax', () => {
+  const lines = parseSignificantLines('# Comment\n\\#literal-name\n  leading-space\ntrailing-space\\ \n');
+  assert.deepEqual(lines, ['\\#literal-name', '  leading-space', 'trailing-space\\ ']);
+});
+
+test('matchComponent keeps directory-only patterns distinct from file patterns', () => {
+  const result = matchComponent(['build'], 'build/\n');
+  assert.equal(result.matched.length, 0);
+  assert.deepEqual(result.unmatched, ['build/']);
+});
+
+test('analyze discovers user-layer components', () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('.gitignore', 'personal-cache/\n');
+    workspace.writeText('user/components/local/personal.gitignore', 'personal-cache/\n');
+
+    const result = runAnalyzeWorkflow({
+      gitignorePath: workspace.path('.gitignore'),
+      distRoot: workspace.path('dist'),
+      userRoot: workspace.path('user')
+    }, { stdout: { write: () => {} }, cwd: workspace.root });
+
+    assert.deepEqual(result.matchedComponents, [{
+      id: 'local/personal',
+      matched: 1,
+      total: 1,
+      classification: 'full'
+    }]);
+    assert.deepEqual(result.unmatchedLines, []);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('matchComponent computes correct ratio', () => {
   const inputSet = new Set(['.idea/', '*.iml', '*.ipr', '*.iws']);
   const content = '# JetBrains\n.idea/\n*.iml\n*.ipr\n*.iws\n';
