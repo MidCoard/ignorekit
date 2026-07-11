@@ -1,0 +1,6 @@
+{
+  "name": "node",
+  "base": "generic",
+  "description": "Node.js project.",
+  "components": ["language/node"]
+}

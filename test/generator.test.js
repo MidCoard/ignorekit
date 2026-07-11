@@ -95,3 +95,83 @@ test('generator includes provider text when provider is gitignore.io', async () 
     workspace.cleanup();
   }
 });
+
+test('generator resolves base chain for preset components', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/platform/macos.gitignore', '.DS_Store\n');
+    workspace.writeText('dist/components/language/node.gitignore', 'node_modules/\n');
+    workspace.writeText('dist/components/framework/vite.gitignore', 'dist/\n');
+    workspace.writeJson('dist/presets/generic.json', {
+      name: 'generic',
+      components: ['platform/macos']
+    });
+    workspace.writeJson('dist/presets/node.json', {
+      name: 'node',
+      base: 'generic',
+      components: ['language/node']
+    });
+    workspace.writeJson('dist/presets/vite.json', {
+      name: 'vite',
+      base: 'node',
+      components: ['framework/vite']
+    });
+
+    const resolver = createDefinitionResolver({ distRoot: workspace.path('dist') });
+    const content = await generateGitignore({
+      config: {
+        version: 1,
+        name: 'vite-project',
+        preset: 'vite',
+        provider: { name: 'local' },
+        components: [],
+        custom: [],
+        addons: {}
+      },
+      resolver
+    });
+
+    // Should include components from all levels of the chain
+    assert.match(content, /\.DS_Store/);   // from generic
+    assert.match(content, /node_modules\//); // from node
+    assert.match(content, /dist\//);         // from vite
+    assert.match(content, /Preset: vite/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('generator excludes components from preset via exclude field', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/platform/macos.gitignore', '.DS_Store\n');
+    workspace.writeText('dist/components/language/node.gitignore', 'node_modules/\n');
+    workspace.writeJson('dist/presets/node.json', {
+      name: 'node',
+      components: ['platform/macos', 'language/node']
+    });
+
+    const resolver = createDefinitionResolver({ distRoot: workspace.path('dist') });
+    const content = await generateGitignore({
+      config: {
+        version: 1,
+        name: 'exclude-test',
+        preset: 'node',
+        exclude: ['platform/macos'],
+        provider: { name: 'local' },
+        components: [],
+        custom: [],
+        addons: {}
+      },
+      resolver
+    });
+
+    // Should include language/node but NOT platform/macos
+    assert.match(content, /node_modules\//);
+    assert.doesNotMatch(content, /\.DS_Store/);
+    // Should still reference the preset
+    assert.match(content, /Preset: node/);
+  } finally {
+    workspace.cleanup();
+  }
+});

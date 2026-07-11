@@ -1,10 +1,14 @@
 'use strict';
 
+const os = require('os');
 const path = require('path');
 
 const definitionIdPattern = /^[a-z0-9][a-z0-9._/-]*$/i;
 
 const DIST_ROOT = path.resolve(__dirname, '..', '..');
+
+/** User-level definitions directory — shared across all projects. */
+const USER_ROOT = path.join(os.homedir(), '.ignorekit');
 
 function assertDefinitionId(id) {
   if (!definitionIdPattern.test(id) || id.includes('..')) {
@@ -21,4 +25,4 @@ function resolveInside(root, relativePath) {
   return target;
 }
 
-module.exports = { assertDefinitionId, resolveInside, DIST_ROOT };
+module.exports = { assertDefinitionId, resolveInside, DIST_ROOT, USER_ROOT };

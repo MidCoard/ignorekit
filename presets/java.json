@@ -1,0 +1,6 @@
+{
+  "name": "java",
+  "base": "generic",
+  "description": "Java or Kotlin project.",
+  "components": ["language/java", "editor/java-ide-metadata"]
+}

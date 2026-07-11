@@ -1,0 +1,6 @@
+{
+  "name": "c",
+  "base": "generic",
+  "description": "C project.",
+  "components": ["language/c"]
+}

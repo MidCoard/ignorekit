@@ -1,18 +1,6 @@
 {
   "name": "java-gradle",
+  "base": "java",
   "description": "Java or Kotlin project built with Gradle.",
-  "components": [
-    "platform/macos",
-    "platform/windows",
-    "editor/jetbrains",
-    "editor/vscode",
-    "editor/temporary-files",
-    "local/env-secrets",
-    "local/logs",
-    "local/ai-claude",
-    "language/java",
-    "build/gradle",
-    "editor/java-ide-metadata"
-  ]
+  "components": ["build/gradle"]
 }
-

@@ -159,18 +159,92 @@ test('scorePreset weights completeness over raw count', () => {
   assert.ok(score1.score > score2.score, 'partial match should beat no match');
 });
 
-test('scorePreset: perfect match beats imperfect larger preset', () => {
-  // 8/8 perfect match should beat 9/10 with one miss
+test('scorePreset: preset covering more input lines wins over more complete preset', () => {
+  // A preset with 9/10 matched components covers more input than 8/8 perfect.
+  // With the new scoring, input coverage is the primary signal.
   const componentResults = new Map();
-  // Only 9 out of 10 components have results — comp10 is missing (a real miss)
   for (let i = 1; i <= 9; i++) {
     componentResults.set(`comp${i}`, { matched: [`x${i}`], unmatched: [], total: 1, ratio: 1.0 });
   }
 
-  // generic-idea: 8 components, all fully matched = perfect
-  const perfect = scorePreset(['comp1','comp2','comp3','comp4','comp5','comp6','comp7','comp8'], componentResults);
-  // frontend-vite: 10 components, 9 matched, comp10 is a miss
-  const imperfect = scorePreset(['comp1','comp2','comp3','comp4','comp5','comp6','comp7','comp8','comp9','comp10'], componentResults);
+  // 8 components, all fully matched = perfect completeness but fewer matched lines
+  const perfect = scorePreset(['comp1','comp2','comp3','comp4','comp5','comp6','comp7','comp8'], componentResults, 20);
+  // 10 components, 9 matched, 1 miss = imperfect but covers more input
+  const imperfect = scorePreset(['comp1','comp2','comp3','comp4','comp5','comp6','comp7','comp8','comp9','comp10'], componentResults, 20);
 
-  assert.ok(perfect.score > imperfect.score, `perfect 8/8 (${perfect.score}) should beat imperfect 9/10 (${imperfect.score})`);
+  // The imperfect preset covers more input lines (9 vs 8) — should win
+  assert.ok(imperfect.score > perfect.score, `imperfect 9/10 (${imperfect.score}) should beat perfect 8/8 (${perfect.score}) because it covers more input`);
+});
+
+test('analyze scores base-inheriting presets correctly', () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/platform/macos.gitignore', '.DS_Store\n');
+    workspace.writeText('dist/components/language/node.gitignore', 'node_modules/\n');
+    workspace.writeText('dist/components/framework/vite.gitignore', 'dist/\n');
+    workspace.writeJson('dist/presets/generic.json', {
+      name: 'generic',
+      components: ['platform/macos']
+    });
+    workspace.writeJson('dist/presets/node.json', {
+      name: 'node',
+      base: 'generic',
+      components: ['language/node']
+    });
+    workspace.writeJson('dist/presets/vite.json', {
+      name: 'vite',
+      base: 'node',
+      components: ['framework/vite']
+    });
+
+    // A .gitignore that matches vite's full chain
+    workspace.writeText('.gitignore', `.DS_Store
+node_modules/
+dist/
+`);
+
+    let output = '';
+    const stdout = { write: (s) => { output += s; } };
+
+    const result = runAnalyzeWorkflow(
+      { gitignorePath: workspace.path('.gitignore'), distRoot: workspace.path('dist'), suggestPreset: true },
+      { stdout, cwd: workspace.root }
+    );
+
+    // vite should score highest (all 3 components matched)
+    assert.ok(result.bestPreset, 'Should suggest a preset');
+    assert.equal(result.bestPreset.id, 'vite', 'Should suggest vite for Vite .gitignore');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('scorePreset with line coverage: preset covering more lines wins', () => {
+  // Simulate a Java project where java-gradle matches components covering many lines
+  // but rust matches more components covering few lines
+  const componentResults = new Map();
+  // java-gradle's components cover many lines
+  componentResults.set('editor/jetbrains', { matched: ['.idea/', '*.iml', '*.ipr', '*.iws'], unmatched: [], total: 4, ratio: 1.0 });
+  componentResults.set('language/java', { matched: ['*.class', 'out/', 'bin/'], unmatched: [], total: 3, ratio: 1.0 });
+  componentResults.set('build/gradle', { matched: ['.gradle/', 'build/'], unmatched: [], total: 2, ratio: 1.0 });
+  componentResults.set('platform/macos', { matched: ['.DS_Store'], unmatched: [], total: 1, ratio: 1.0 });
+  componentResults.set('platform/windows', { matched: ['Thumbs.db', 'Desktop.ini'], unmatched: [], total: 2, ratio: 1.0 });
+
+  const totalInputLines = 12;
+
+  // java-gradle: 5 fully matched components, covering 12 lines
+  const javaGradle = scorePreset(
+    ['editor/jetbrains', 'language/java', 'build/gradle', 'platform/macos', 'platform/windows', 'local/env-secrets', 'local/logs', 'editor/java-ide-metadata', 'editor/temporary-files', 'local/assistant-artifacts', 'local/ai-claude'],
+    componentResults, totalInputLines
+  );
+
+  // rust: 5 fully matched, covering only 3 lines (just platform components)
+  const rust = scorePreset(
+    ['platform/macos', 'platform/windows', 'language/rust', 'build/cargo', 'editor/jetbrains', 'local/env-secrets', 'local/logs', 'editor/temporary-files', 'local/assistant-artifacts'],
+    componentResults, totalInputLines
+  );
+
+  // java-gradle should score higher because its matched components cover more of the input
+  assert.ok(javaGradle.score > rust.score,
+    `java-gradle (${javaGradle.score}) should beat rust (${rust.score}) when java-gradle covers more lines`);
 });

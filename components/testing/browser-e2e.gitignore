@@ -1,0 +1,5 @@
+# Browser E2E test output
+cypress/videos/
+cypress/screenshots/
+playwright-report/
+test-results/

@@ -3,21 +3,10 @@
 const fs = require('fs');
 const path = require('path');
 const { readJson } = require('../core/json');
-const { normalizeText } = require('../core/text');
+const { normalizeText, parseSignificantLines } = require('../core/text');
 const { listDefinitions } = require('../core/fs');
-const { createDefinitionResolver } = require('../definitions/resolver');
+const { createDefinitionResolver, resolvePresetComponents } = require('../definitions/resolver');
 const { DIST_ROOT } = require('../core/path');
-
-/**
- * Parse significant (non-comment, non-blank) lines from gitignore content.
- * @param {string} content
- * @returns {string[]}
- */
-function parseSignificantLines(content) {
-  return normalizeText(content).split('\n')
-    .map(line => line.trim())
-    .filter(line => line.length > 0 && !line.startsWith('#'));
-}
 
 /**
  * Normalize a gitignore pattern for matching purposes.
@@ -31,7 +20,7 @@ function normalizePattern(line) {
 
 /**
  * Compute match result for a component against input lines.
- * @param {Set<string>} inputLines - Normalized significant lines from the input .gitignore
+ * @param {Iterable<string>} inputLines - Normalized significant lines from the input .gitignore
  * @param {string} componentContent - Raw content of the component
  * @returns {{ matched: string[], unmatched: string[], total: number, ratio: number }}
  */
@@ -72,33 +61,74 @@ function classifyMatch(ratio) {
 
 /**
  * Score a preset based on how many of its components match the input.
+ *
+ * Two main factors:
+ * 1. Input coverage — how many of the input .gitignore's rules are
+ *    explained by this preset's matched components (count and percentage).
+ *    This rewards presets that cover more of what the user actually has.
+ * 2. Added rules — how many NEW rules this preset would introduce that
+ *    aren't in the current .gitignore. This penalizes presets that would
+ *    add noise.
+ *
  * @param {string[]} presetComponents - Component IDs in the preset
  * @param {Map<string, object>} componentResults - Match results keyed by component ID
+ * @param {number} totalInputLines - Total significant lines in the input .gitignore
  * @returns {{ score: number, fullCount: number, partialCount: number, missCount: number }}
  */
-function scorePreset(presetComponents, componentResults) {
+function scorePreset(presetComponents, componentResults, totalInputLines = 0) {
   let fullCount = 0;
   let partialCount = 0;
   let missCount = 0;
+  let matchedLineCount = 0;
+  let addedRuleCount = 0;
   for (const id of presetComponents) {
     const result = componentResults.get(id);
     if (!result) { missCount++; continue; }
     const cls = classifyMatch(result.ratio);
-    if (cls === 'full') fullCount++;
-    else if (cls === 'partial') partialCount++;
-    else missCount++;
+    // All matched lines count toward input coverage, regardless of classification.
+    // Full matches count at full weight, partial at half, and even "none" matches
+    // (below threshold) still cover some input lines — count at quarter weight.
+    const WEIGHT_FULL = 1.0;
+    const WEIGHT_PARTIAL = 0.5;
+    const WEIGHT_NONE = 0.25;
+    if (cls === 'full') {
+      fullCount++;
+      matchedLineCount += result.matched.length * WEIGHT_FULL;
+      addedRuleCount += result.unmatched.length;
+    } else if (cls === 'partial') {
+      partialCount++;
+      matchedLineCount += result.matched.length * WEIGHT_PARTIAL;
+      addedRuleCount += result.unmatched.length;
+    } else {
+      missCount++;
+      // Even "none" classification means some lines matched — count them
+      matchedLineCount += result.matched.length * WEIGHT_NONE;
+      addedRuleCount += result.total;
+    }
   }
   const total = presetComponents.length;
-  // Completeness: what fraction of the preset's components are fully matched
-  // This ensures a perfect 8/8 beats an imperfect 9/10
+
+  // Factor 1: Input coverage percentage (how much of the .gitignore this preset explains)
+  const inputCoverage = totalInputLines > 0 ? matchedLineCount / totalInputLines : 0;
+
+  // Factor 2: Component completeness (fraction of preset components fully matched)
   const completeness = total > 0 ? fullCount / total : 0;
-  // Coverage: how many components matched (raw signal)
-  const coverage = fullCount * 2 + partialCount;
-  // Penalty: missCount means the preset would add rules NOT in the current .gitignore
-  const penalty = missCount;
-  // Final score: completeness is the primary signal, coverage is the tiebreaker,
-  // penalty reduces score for presets that would add unwanted rules
-  const score = Math.round(completeness * 1000 + coverage - penalty);
+
+  // Scoring weights — named constants for clarity
+  const SCORE_INPUT_COVERAGE = 400;
+  const SCORE_COMPLETENESS = 150;
+  const SCORE_MATCHED_LINES = 25;
+  const PENALTY_ADDED_RULES = 2;
+
+  // Final score: input coverage and matched line count are the primary signals,
+  // completeness measures structural fit, added rules penalize noise.
+  // Floor at 0 to avoid confusing negative scores in a "best match" context.
+  const score = Math.max(0, Math.round(
+    inputCoverage * SCORE_INPUT_COVERAGE +
+    completeness * SCORE_COMPLETENESS +
+    matchedLineCount * SCORE_MATCHED_LINES -
+    addedRuleCount * PENALTY_ADDED_RULES
+  ));
   return { score, fullCount, partialCount, missCount };
 }
 
@@ -115,7 +145,6 @@ function analyzeGitignore(options) {
   const gitignorePath = path.resolve(options.gitignorePath);
   const rawContent = fs.readFileSync(gitignorePath, 'utf8');
   const inputLines = parseSignificantLines(rawContent);
-  const inputSet = new Set(inputLines);
   const totalInputLines = inputLines.length;
 
   const distRoot = options.distRoot || DIST_ROOT;
@@ -134,7 +163,7 @@ function analyzeGitignore(options) {
   for (const id of componentIds) {
     try {
       const content = resolver.readComponent(id);
-      const result = matchComponent(inputSet, content);
+      const result = matchComponent(inputLines, content);
       if (result.matched.length > 0) {
         componentResults.set(id, result);
       }
@@ -180,12 +209,11 @@ function analyzeGitignore(options) {
     const presetIds = listDefinitions(presetsDir, '.json');
     for (const presetId of presetIds) {
       try {
-        const presetDef = resolver.readPreset(presetId);
-        const presetComponents = Array.isArray(presetDef.components) ? presetDef.components : [];
-        const score = scorePreset(presetComponents, componentResults);
+        const presetComponents = resolvePresetComponents(resolver, presetId);
+        const score = scorePreset(presetComponents, componentResults, totalInputLines);
         allPresets.push({ id: presetId, ...score, componentCount: presetComponents.length, components: presetComponents });
       } catch {
-        // Skip
+        // Skip presets with broken base chains
       }
     }
     allPresets.sort((a, b) => b.score - a.score);
@@ -267,11 +295,11 @@ function runAnalyzeWorkflow(options, env) {
     if (analysis.allPresets.length > 0) {
       stdout.write('Preset suggestions:\n');
       for (const ps of analysis.allPresets) {
-        const matchLabel = `${ps.fullCount}/${ps.componentCount} components fully matched`;
+        const matchLabel = `${ps.fullCount} of ${ps.componentCount} preset components fully matched`;
         stdout.write(`  ${ps.id.padEnd(24)} ${matchLabel} (score: ${ps.score})\n`);
       }
       stdout.write('\n');
-      stdout.write(`Best preset match: ${analysis.bestPreset.id} (${analysis.bestPreset.fullCount}/${analysis.bestPreset.componentCount} components fully matched)\n`);
+      stdout.write(`Best preset match: ${analysis.bestPreset.id} (${analysis.bestPreset.fullCount} of ${analysis.bestPreset.componentCount} preset components fully matched)\n`);
     } else {
       stdout.write('No presets available for suggestion.\n');
     }

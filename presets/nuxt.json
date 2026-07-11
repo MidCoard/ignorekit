@@ -1,0 +1,6 @@
+{
+  "name": "nuxt",
+  "base": "vite",
+  "description": "Nuxt project.",
+  "components": ["framework/nuxt"]
+}

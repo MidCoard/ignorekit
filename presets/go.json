@@ -1,0 +1,6 @@
+{
+  "name": "go",
+  "base": "generic",
+  "description": "Go project.",
+  "components": ["language/go"]
+}

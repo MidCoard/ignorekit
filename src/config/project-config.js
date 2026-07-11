@@ -25,6 +25,7 @@ function normalizeProjectConfig(input) {
     preset: input.preset,
     provider,
     components: Array.isArray(input.components) ? input.components : [],
+    exclude: Array.isArray(input.exclude) ? input.exclude : [],
     custom: Array.isArray(input.custom) ? input.custom : [],
     addons: input.addons && typeof input.addons === 'object' ? input.addons : {}
   };

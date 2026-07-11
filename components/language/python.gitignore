@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+dist/
+*.egg-info/
+*.egg
+.Python
+pip-log.txt

@@ -1,0 +1,6 @@
+{
+  "name": "flask",
+  "base": "python",
+  "description": "Flask web project.",
+  "components": ["framework/flask"]
+}

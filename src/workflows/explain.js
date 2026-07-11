@@ -3,19 +3,9 @@
 const path = require('path');
 const { readJson } = require('../core/json');
 const { normalizeProjectConfig } = require('../config/project-config');
-const { createDefinitionResolver } = require('../definitions/resolver');
+const { createDefinitionResolver, resolvePresetComponents, resolvePresetChain } = require('../definitions/resolver');
+const { parseSignificantLines } = require('../core/text');
 const { DIST_ROOT } = require('../core/path');
-
-/**
- * Parse significant (non-comment, non-blank) lines from gitignore content.
- * @param {string} content
- * @returns {string[]}
- */
-function parseSignificantLines(content) {
-  return content.split('\n')
-    .map(line => line.trim())
-    .filter(line => line.length > 0 && !line.startsWith('#'));
-}
 
 /**
  * Format a brief summary of component content for the table.
@@ -63,40 +53,92 @@ function runExplainWorkflow(options, env) {
     projectRoot
   });
 
-  // Resolve preset components
-  const preset = config.preset ? resolver.readPreset(config.preset) : null;
-  const presetComponents = preset ? (Array.isArray(preset.components) ? preset.components : []) : [];
+  // Resolve preset components and inheritance chain
+  const presetComponents = config.preset
+    ? resolvePresetComponents(resolver, config.preset)
+    : [];
+  const excludeSet = new Set(config.exclude || []);
+  const filteredPresetComponents = presetComponents.filter(id => !excludeSet.has(id));
   const extraComponents = config.components || [];
-  const allComponents = [...presetComponents, ...extraComponents];
+  const allComponents = [...filteredPresetComponents, ...extraComponents];
+
+  // Compute inheritance chain once — reused for header display and component grouping
+  let chain = null;
+  if (config.preset) {
+    try {
+      chain = resolvePresetChain(resolver, config.preset);
+    } catch {
+      // Chain resolution failed — chain remains null
+    }
+  }
+
+  // Build inheritance chain display for header
+  let chainDisplay = '';
+  if (chain && chain.length > 1) {
+    chainDisplay = ` (extends ${chain.slice(0, -1).join(' → ')})`;
+  }
 
   // Header
   stdout.write(`Project: ${config.name}\n`);
   if (config.preset) {
-    stdout.write(`Preset:  ${config.preset} (${presetComponents.length} component${presetComponents.length !== 1 ? 's' : ''})\n`);
+    stdout.write(`Preset:  ${config.preset}${chainDisplay} (${filteredPresetComponents.length} component${filteredPresetComponents.length !== 1 ? 's' : ''})\n`);
   } else {
-    stdout.write(`Preset:  none\n`);
+    stdout.write('Preset:  none\n');
   }
   stdout.write('\n');
 
-  // Preset components
-  if (presetComponents.length > 0) {
-    stdout.write(`From preset "${config.preset}":\n`);
-    for (const componentId of presetComponents) {
-      const content = resolver.readComponent(componentId);
-      const lines = parseSignificantLines(content);
-      const ruleCount = lines.length;
-      const summary = summarizeLines(lines);
-      const pad = 24;
-      const idPadded = componentId.padEnd(pad);
-      const countLabel = `${ruleCount} rule${ruleCount !== 1 ? 's' : ''}`;
-      stdout.write(`  ${idPadded} ${countLabel.padEnd(10)} ${summary}\n`);
-
-      if (options.verbose) {
-        for (const line of content.split('\n')) {
-          stdout.write(`    ${line}\n`);
-        }
-        stdout.write('\n');
+  // Group preset components by their level in the inheritance chain
+  if (filteredPresetComponents.length > 0 && config.preset) {
+    // Build a map: presetId → its own components (not inherited)
+    const ownComponentsMap = new Map();
+    try {
+      for (const presetId of (chain || [config.preset])) {
+        const presetDef = resolver.readPreset(presetId);
+        const own = Array.isArray(presetDef.components) ? presetDef.components : [];
+        ownComponentsMap.set(presetId, own);
       }
+    } catch {
+      // Fallback: show all under the preset name
+      ownComponentsMap.set(config.preset, presetComponents);
+    }
+
+    // Track which components we've already shown (dedup across levels)
+    const shown = new Set();
+
+    for (const [presetId, ownIds] of ownComponentsMap) {
+      // Only show components not already shown by a base preset, and not excluded
+      const newIds = ownIds.filter(id => !shown.has(id) && !excludeSet.has(id));
+      if (newIds.length === 0) continue;
+      for (const id of newIds) shown.add(id);
+
+      const label = presetId === config.preset ? `From "${presetId}":` : `From ${presetId}:`;
+      stdout.write(`${label}\n`);
+      for (const componentId of newIds) {
+        const content = resolver.readComponent(componentId);
+        const lines = parseSignificantLines(content);
+        const ruleCount = lines.length;
+        const summary = summarizeLines(lines);
+        const pad = 24;
+        const idPadded = componentId.padEnd(pad);
+        const countLabel = `${ruleCount} rule${ruleCount !== 1 ? 's' : ''}`;
+        stdout.write(`  ${idPadded} ${countLabel.padEnd(10)} ${summary}\n`);
+
+        if (options.verbose) {
+          for (const line of content.split('\n')) {
+            stdout.write(`    ${line}\n`);
+          }
+          stdout.write('\n');
+        }
+      }
+      stdout.write('\n');
+    }
+  }
+
+  // Excluded components
+  if (excludeSet.size > 0) {
+    stdout.write('Excluded from preset:\n');
+    for (const componentId of config.exclude) {
+      stdout.write(`  ${componentId}\n`);
     }
     stdout.write('\n');
   }
@@ -122,7 +164,7 @@ function runExplainWorkflow(options, env) {
       }
     }
     stdout.write('\n');
-  } else if (presetComponents.length > 0) {
+  } else if (filteredPresetComponents.length > 0) {
     stdout.write('Extra components: (none)\n\n');
   }
 

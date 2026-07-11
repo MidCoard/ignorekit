@@ -1,8 +1,8 @@
 {
   "version": 1,
   "name": "ignorekit",
-  "preset": "generic",
-  "components": ["language/node", "local/ai-codegraph"],
+  "preset": "node",
+  "components": ["local/ai-codegraph"],
   "custom": [
     ".worktrees/",
     "docs/",

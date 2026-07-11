@@ -1,0 +1,6 @@
+{
+  "name": "rust",
+  "base": "generic",
+  "description": "Rust project.",
+  "components": ["language/rust"]
+}

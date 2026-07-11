@@ -20,6 +20,7 @@ test('normalizes a project config with preset, provider, components, and custom 
     preset: 'java-gradle',
     provider: { name: 'gitignore.io', templates: ['java', 'gradle'] },
     components: ['local/logs'],
+    exclude: [],
     custom: ['/runtime/'],
     addons: {}
   });
@@ -53,6 +54,25 @@ test('defaults components and custom to empty arrays', () => {
   });
   assert.deepEqual(config.components, []);
   assert.deepEqual(config.custom, []);
+  assert.deepEqual(config.exclude, []);
+});
+
+test('normalizes exclude field', () => {
+  const config = normalizeProjectConfig({
+    version: 1,
+    name: 'demo',
+    preset: 'java-gradle',
+    exclude: ['editor/java-ide-metadata']
+  });
+  assert.deepEqual(config.exclude, ['editor/java-ide-metadata']);
+});
+
+test('defaults exclude to empty array when omitted', () => {
+  const config = normalizeProjectConfig({
+    version: 1,
+    name: 'demo'
+  });
+  assert.deepEqual(config.exclude, []);
 });
 
 test('rejects config without a name', () => {
@@ -75,6 +95,18 @@ test('buildProjectConfig omits provider.templates when templates array is empty'
   const { buildProjectConfig } = require('../src/config/build-config');
   const config = buildProjectConfig('demo', { provider: 'gitignore.io', templates: [] });
   assert.deepEqual(config.provider, { name: 'gitignore.io' });
+});
+
+test('buildProjectConfig includes exclude field from options', () => {
+  const { buildProjectConfig } = require('../src/config/build-config');
+  const config = buildProjectConfig('demo', { preset: 'node', exclude: ['platform/macos', 'editor/vscode'] });
+  assert.deepEqual(config.exclude, ['platform/macos', 'editor/vscode']);
+});
+
+test('buildProjectConfig defaults exclude to empty array when not provided', () => {
+  const { buildProjectConfig } = require('../src/config/build-config');
+  const config = buildProjectConfig('demo', { preset: 'node' });
+  assert.deepEqual(config.exclude, []);
 });
 
 test('fetchGitignoreIoTemplates rejects on timeout', async () => {

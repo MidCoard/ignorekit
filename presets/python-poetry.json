@@ -1,0 +1,6 @@
+{
+  "name": "python-poetry",
+  "base": "python",
+  "description": "Python project managed with Poetry.",
+  "components": ["package/poetry"]
+}

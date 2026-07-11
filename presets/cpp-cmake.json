@@ -1,0 +1,6 @@
+{
+  "name": "cpp-cmake",
+  "base": "cpp",
+  "description": "C++ project built with CMake.",
+  "components": ["build/cmake"]
+}

@@ -1,16 +1,6 @@
 {
   "name": "scientific",
-  "description": "Research or analysis project — adds scientific artifact ignores on top of the generic base.",
-  "components": [
-    "platform/macos",
-    "platform/windows",
-    "editor/jetbrains",
-    "editor/vscode",
-    "editor/temporary-files",
-    "local/env-secrets",
-    "local/logs",
-    "local/ai-claude",
-    "domain/scientific-artifacts"
-  ]
+  "base": "generic",
+  "description": "Research or analysis project.",
+  "components": ["domain/scientific-artifacts"]
 }
-

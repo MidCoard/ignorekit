@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { assertDefinitionId, resolveInside } = require('../core/path');
+const { assertDefinitionId, resolveInside, USER_ROOT } = require('../core/path');
 const { normalizeText } = require('../core/text');
 const { analyzeGitignore } = require('./analyze');
 
@@ -18,7 +18,7 @@ const { analyzeGitignore } = require('./analyze');
  * @param {object} options
  * @param {string} options.id - Component identifier (e.g. local/runtime)
  * @param {string} options.from - Path to the source .gitignore file
- * @param {string} [options.outputRoot] - Output directory (default: .ignorekit)
+ * @param {string} [options.outputRoot] - Output directory (default: ~/.ignorekit)
  * @param {boolean} [options.full] - Extract the full .gitignore (skip analysis, legacy behavior)
  * @param {string} [options.distRoot] - Override dist root
  * @param {string} [options.userRoot] - User-level override directory
@@ -32,7 +32,9 @@ function runExtractComponent(options, env) {
   const stdout = env.stdout || process.stdout;
   assertDefinitionId(options.id);
   const sourcePath = path.resolve(env.cwd || process.cwd(), options.from);
-  const outputRoot = path.resolve(env.cwd || process.cwd(), options.outputRoot || '.ignorekit');
+  const outputRoot = options.outputRoot
+    ? path.resolve(env.cwd || process.cwd(), options.outputRoot)
+    : USER_ROOT;
   const outputPath = resolveInside(outputRoot, path.join('components', `${options.id}.gitignore`));
   const source = fs.readFileSync(sourcePath, 'utf8');
   const warnings = [];
@@ -42,6 +44,9 @@ function runExtractComponent(options, env) {
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.writeFileSync(outputPath, normalizeText(source), 'utf8');
     stdout.write(`Created component ${options.id} (full extraction, no analysis)\n`);
+    if (!options.outputRoot) {
+      stdout.write(`  Component is available to all projects via the user definitions layer.\n`);
+    }
     return { outputPath, analysis: null, warnings };
   }
 
@@ -113,7 +118,11 @@ function runExtractComponent(options, env) {
   // Print results
   stdout.write(`Extracted component ${options.id}:\n`);
   stdout.write(`  ${unmatchedLines.length} unmatched rule(s) written to ${outputPath}\n`);
-  stdout.write(`  ${analysis.matchedComponents.reduce((s, c) => s + c.matched.length, 0)} rule(s) already covered by known components (not extracted)\n\n`);
+  stdout.write(`  ${analysis.matchedComponents.reduce((s, c) => s + c.matched.length, 0)} rule(s) already covered by known components (not extracted)\n`);
+  if (!options.outputRoot) {
+    stdout.write(`  Component is available to all projects via the user definitions layer.\n`);
+  }
+  stdout.write('\n');
 
   if (warnings.length > 0) {
     stdout.write('Warnings:\n');

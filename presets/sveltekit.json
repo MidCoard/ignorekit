@@ -1,0 +1,6 @@
+{
+  "name": "sveltekit",
+  "base": "vite",
+  "description": "SvelteKit project.",
+  "components": ["framework/sveltekit"]
+}

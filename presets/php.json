@@ -1,0 +1,6 @@
+{
+  "name": "php",
+  "base": "generic",
+  "description": "PHP project.",
+  "components": ["language/php"]
+}

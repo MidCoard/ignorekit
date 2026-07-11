@@ -1,0 +1,6 @@
+{
+  "name": "node-yarn",
+  "base": "node",
+  "description": "Node.js project using Yarn.",
+  "components": ["package/yarn"]
+}

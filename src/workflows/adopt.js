@@ -5,7 +5,7 @@ const path = require('path');
 const { writeJson } = require('../core/json');
 const { DIST_ROOT } = require('../core/path');
 const { buildProjectConfig } = require('../config/build-config');
-const { createDefinitionResolver } = require('../definitions/resolver');
+const { createDefinitionResolver, resolvePresetComponents } = require('../definitions/resolver');
 const { generateGitignore } = require('../generator');
 const { listTrackedIgnoredFiles, removeCachedFiles } = require('../git');
 const { analyzeGitignore } = require('./analyze');
@@ -81,8 +81,7 @@ async function runAdoptWorkflow(options, env) {
     });
 
     try {
-      const presetDef = resolver.readPreset(options.preset);
-      const presetComponents = Array.isArray(presetDef.components) ? presetDef.components : [];
+      const presetComponents = resolvePresetComponents(resolver, options.preset);
 
       // Find components in the preset that are NOT matched in the current .gitignore
       const newComponents = presetComponents.filter(id => {
@@ -160,6 +159,21 @@ async function runAdoptWorkflow(options, env) {
   fs.writeFileSync(path.join(projectPath, outputName), gitignore, 'utf8');
 
   stdout.write(`Generated ${outputLabel}\n`);
+
+  // In preview mode, ensure .gitignore.preview is listed in .gitignore
+  // so it doesn't get accidentally tracked
+  if (!options.apply) {
+    const existingGitignorePath = path.join(projectPath, '.gitignore');
+    if (fs.existsSync(existingGitignorePath)) {
+      const existing = fs.readFileSync(existingGitignorePath, 'utf8');
+      if (!existing.split('\n').some(line => line.trim() === '.gitignore.preview')) {
+        fs.appendFileSync(existingGitignorePath, '\n.gitignore.preview\n', 'utf8');
+      }
+    } else {
+      // No .gitignore exists — create one that ignores the preview file
+      fs.writeFileSync(existingGitignorePath, '.gitignore.preview\n', 'utf8');
+    }
+  }
 
   // Handle cached file removal
   let cachedRemoval = { action: 'skipped', files: [] };

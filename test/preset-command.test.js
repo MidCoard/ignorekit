@@ -2,6 +2,8 @@
 
 const assert = require('assert');
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const test = require('node:test');
 const { runCli } = require('../src/cli');
 const { createTempWorkspace } = require('./helpers/temp-workspace');
@@ -60,5 +62,34 @@ test('preset create with multiple components', async () => {
     assert.deepEqual(preset.components, ['language/java', 'language/node']);
   } finally {
     workspace.cleanup();
+  }
+});
+
+test('preset create defaults to user definitions directory', async () => {
+  // Use a temp directory as a fake user root
+  const fakeUserRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ignorekit-user-'));
+  try {
+    const result = await runCli([
+      'preset',
+      'create',
+      'my-custom',
+      '--component',
+      'local/runtime',
+      '--output-root',
+      fakeUserRoot
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: fakeUserRoot
+    });
+
+    assert.equal(result.exitCode, 0);
+    const presetPath = path.join(fakeUserRoot, 'presets', 'my-custom.json');
+    assert.ok(fs.existsSync(presetPath), 'Preset should be written to user root');
+    const preset = JSON.parse(fs.readFileSync(presetPath, 'utf8'));
+    assert.equal(preset.name, 'my-custom');
+    assert.deepEqual(preset.components, ['local/runtime']);
+  } finally {
+    fs.rmSync(fakeUserRoot, { recursive: true, force: true });
   }
 });

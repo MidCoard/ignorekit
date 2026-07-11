@@ -33,6 +33,9 @@ function main() {
     });
   }
 
+  // Validate shipped presets (base references, circular detection, component references)
+  validateShippedPresets(shippedPresets, shippedComponents, errors);
+
   if (errors.length > 0) {
     for (const error of errors) {
       console.error(`ERROR ${error}`);
@@ -295,6 +298,51 @@ function assertComponent(component, location, context, data) {
   }
 
   context.errors.push(`${location} references unknown component '${component}'`);
+}
+
+function validateShippedPresets(shippedPresets, shippedComponents, errors) {
+  const presetData = new Map();
+  for (const presetId of shippedPresets) {
+    const filePath = path.join(presetsDir, `${presetId}.json`);
+    try {
+      presetData.set(presetId, JSON.parse(fs.readFileSync(filePath, 'utf8')));
+    } catch (e) {
+      errors.push(`preset ${presetId}: invalid JSON: ${e.message}`);
+    }
+  }
+
+  for (const [presetId, data] of presetData) {
+    // Validate base reference
+    if (data.base) {
+      if (!shippedPresets.has(data.base)) {
+        errors.push(`preset ${presetId}: references unknown base '${data.base}'`);
+      }
+    }
+
+    // Validate component references
+    if (Array.isArray(data.components)) {
+      for (const component of data.components) {
+        if (!shippedComponents.has(component)) {
+          errors.push(`preset ${presetId}: references unknown component '${component}'`);
+        }
+      }
+    }
+
+    // Circular base detection
+    if (data.base) {
+      const visited = new Set();
+      let current = presetId;
+      while (current) {
+        if (visited.has(current)) {
+          errors.push(`preset ${presetId}: circular base inheritance: ${[...visited, current].join(' → ')}`);
+          break;
+        }
+        visited.add(current);
+        const currentData = presetData.get(current);
+        current = currentData?.base || null;
+      }
+    }
+  }
 }
 
 function listDefinitions(directory, extension) {

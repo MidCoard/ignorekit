@@ -1,0 +1,6 @@
+{
+  "name": "ruby",
+  "base": "generic",
+  "description": "Ruby project.",
+  "components": ["language/ruby"]
+}

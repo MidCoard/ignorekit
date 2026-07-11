@@ -11,6 +11,7 @@ function buildProjectConfig(name, options) {
     preset: options.preset,
     provider,
     components: options.components || [],
+    exclude: options.exclude || [],
     custom: [],
     addons: {}
   };

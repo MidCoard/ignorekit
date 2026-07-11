@@ -1,0 +1,6 @@
+{
+  "name": "python",
+  "base": "generic",
+  "description": "Python project.",
+  "components": ["language/python", "package/pip"]
+}

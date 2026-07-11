@@ -164,3 +164,105 @@ test('adopt --remove-cached dry-run prints file list to stdout', async () => {
     workspace.cleanup();
   }
 });
+
+test('adopt preview appends .gitignore.preview to .gitignore', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    // Existing .gitignore that does NOT contain .gitignore.preview
+    workspace.writeText('project/.gitignore', 'old-rule\n');
+
+    const result = await runCli([
+      'adopt',
+      workspace.path('project'),
+      '--preset',
+      'demo',
+      '--dist-root',
+      workspace.path('dist')
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+
+    // .gitignore.preview should exist
+    assert.ok(fs.existsSync(workspace.path('project/.gitignore.preview')), '.gitignore.preview should be created');
+
+    // .gitignore should now contain .gitignore.preview
+    const gitignore = workspace.readText('project/.gitignore');
+    assert.match(gitignore, /\.gitignore\.preview/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('adopt preview does not duplicate .gitignore.preview entry', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    // Existing .gitignore that ALREADY contains .gitignore.preview
+    workspace.writeText('project/.gitignore', 'old-rule\n.gitignore.preview\n');
+
+    const result = await runCli([
+      'adopt',
+      workspace.path('project'),
+      '--preset',
+      'demo',
+      '--dist-root',
+      workspace.path('dist'),
+      '--overwrite-config'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+
+    // .gitignore should still contain exactly one .gitignore.preview line
+    const gitignore = workspace.readText('project/.gitignore');
+    const count = (gitignore.match(/\.gitignore\.preview/g) || []).length;
+    assert.equal(count, 1, 'Should not duplicate .gitignore.preview entry');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('adopt preview creates .gitignore when none exists', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    // Create the project directory but no .gitignore
+    workspace.writeText('project/.gitkeep', '');
+
+    const result = await runCli([
+      'adopt',
+      workspace.path('project'),
+      '--preset',
+      'demo',
+      '--dist-root',
+      workspace.path('dist')
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+
+    // .gitignore.preview should exist
+    assert.ok(fs.existsSync(workspace.path('project/.gitignore.preview')), '.gitignore.preview should be created');
+
+    // .gitignore should be created with .gitignore.preview entry
+    assert.ok(fs.existsSync(workspace.path('project/.gitignore')), '.gitignore should be created when none exists');
+    const gitignore = workspace.readText('project/.gitignore');
+    assert.match(gitignore, /\.gitignore\.preview/, '.gitignore should contain .gitignore.preview');
+  } finally {
+    workspace.cleanup();
+  }
+});

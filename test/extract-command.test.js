@@ -2,9 +2,12 @@
 
 const assert = require('assert');
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const test = require('node:test');
 const { runCli } = require('../src/cli');
 const { createTempWorkspace } = require('./helpers/temp-workspace');
+const { USER_ROOT } = require('../src/core/path');
 
 test('extract component writes a reusable component draft', async () => {
   const workspace = createTempWorkspace();
@@ -110,6 +113,79 @@ MIGRATION.md
     const outputText = output.join('');
     assert.match(outputText, /Analyzing/);
     assert.match(outputText, /Already covered/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('extract component defaults to user definitions directory', async () => {
+  // Test the workflow function directly to verify the default output path
+  const { runExtractComponent } = require('../src/workflows/extract');
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('project/.gitignore', 'custom-pattern/\n');
+    workspace.writeText('dist/components/dummy.gitignore', '# dummy\n');
+
+    const output = [];
+    const result = runExtractComponent({
+      id: 'local/test-default',
+      from: workspace.path('project/.gitignore'),
+      distRoot: workspace.path('dist'),
+      // No outputRoot — should default to USER_ROOT
+    }, {
+      stdout: { write: (text) => output.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    // The output path should be under USER_ROOT (~/.ignorekit)
+    assert.ok(result.outputPath, 'Should return an output path');
+    assert.ok(
+      result.outputPath.includes('.ignorekit') && result.outputPath.includes('components'),
+      `Output path should be under user definitions dir, got: ${result.outputPath}`
+    );
+    assert.ok(
+      result.outputPath.includes('local') && result.outputPath.includes('test-default.gitignore'),
+      `Output path should include the component id, got: ${result.outputPath}`
+    );
+
+    // Output should mention the user definitions layer
+    const outputText = output.join('');
+    assert.match(outputText, /user definitions layer/);
+
+    // Clean up the file that was written to the real USER_ROOT
+    try { fs.rmSync(path.dirname(result.outputPath), { recursive: true, force: true }); } catch {}
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('extract component with --output-root writes to specified directory', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('project/.gitignore', 'custom-pattern/\n');
+    const output = [];
+    const result = await runCli([
+      'extract',
+      'component',
+      'local/test-override',
+      '--from',
+      workspace.path('project/.gitignore'),
+      '--output-root',
+      workspace.path('custom-output'),
+      '--full'
+    ], {
+      stdout: { write: (text) => output.push(String(text)) },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    const componentPath = workspace.path('custom-output/components/local/test-override.gitignore');
+    assert.ok(fs.existsSync(componentPath), 'Component should be written to custom output root');
+
+    // Should NOT mention user definitions layer when --output-root is specified
+    const outputText = output.join('');
+    assert.doesNotMatch(outputText, /user definitions layer/);
   } finally {
     workspace.cleanup();
   }

@@ -1,0 +1,6 @@
+{
+  "name": "cpp",
+  "base": "generic",
+  "description": "C++ project.",
+  "components": ["language/cpp"]
+}

@@ -6,7 +6,7 @@ const { readJson } = require('./core/json');
 const { listDefinitions } = require('./core/fs');
 const { DIST_ROOT } = require('./core/path');
 const { normalizeProjectConfig } = require('./config/project-config');
-const { createDefinitionResolver } = require('./definitions/resolver');
+const { createDefinitionResolver, resolvePresetChain } = require('./definitions/resolver');
 const { generateGitignore } = require('./generator');
 const { runInitWorkflow } = require('./workflows/init');
 const { runAdoptWorkflow } = require('./workflows/adopt');
@@ -179,10 +179,14 @@ Arguments:
 
 Options:
   --full                  Extract entire .gitignore without analysis (legacy mode)
-  --output-root <path>    Output directory (default: .ignorekit)
+  --output-root <path>    Output directory (default: ~/.ignorekit)
   --dist-root <path>      Root directory for shipped definitions
   --user-root <path>      User-level override directory
   --workspace-root <path> Workspace-level definition directory
+
+By default, extracted components are written to ~/.ignorekit/components/ so they
+are available to all projects via the user definitions layer.
+Use --output-root .ignorekit to write to the project-local directory instead.
 
 By default, extract first analyzes the .gitignore against known components,
 then extracts only the unmatched (custom) rules as a new component.
@@ -245,7 +249,11 @@ Arguments:
 Options:
   --base <name>           Base preset to extend
   --component <id>        Add a component (repeatable)
-  --output-root <path>    Output directory (default: .ignorekit)
+  --output-root <path>    Output directory (default: ~/.ignorekit)
+
+By default, created presets are written to ~/.ignorekit/presets/ so they
+are available to all projects via the user definitions layer.
+Use --output-root .ignorekit to write to the project-local directory instead.
 
 Examples:
   ignorekit preset create java-gradle-extended --base java-gradle --component local/runtime
@@ -283,8 +291,19 @@ function commandList(args, env) {
   if (target === 'all' || target === 'presets') {
     if (target === 'all') stdout.write('\n');
     stdout.write('Presets:\n');
+    const resolver = createDefinitionResolver({ distRoot });
     for (const preset of listDefinitions(presetsDir, '.json')) {
-      stdout.write(`  ${preset}\n`);
+      try {
+        const chain = resolvePresetChain(resolver, preset);
+        if (chain.length > 1) {
+          const bases = chain.slice(0, -1).join(' → ');
+          stdout.write(`  ${preset} (extends ${bases})\n`);
+        } else {
+          stdout.write(`  ${preset}\n`);
+        }
+      } catch {
+        stdout.write(`  ${preset}\n`);
+      }
     }
   }
 
@@ -358,7 +377,7 @@ async function pickPresetInteractive(options, env) {
 
       if (analysis.bestPreset && analysis.bestPreset.score > 0) {
         suggestion = analysis.bestPreset.id;
-        const matchInfo = `${analysis.bestPreset.fullCount}/${analysis.bestPreset.componentCount} components matched`;
+        const matchInfo = `${analysis.bestPreset.fullCount} of ${analysis.bestPreset.componentCount} components matched`;
         stdout.write(`💡 Best match: ${suggestion} (${matchInfo})\n\n`);
       }
     } catch {
@@ -487,6 +506,7 @@ async function runCli(args, env = {}) {
         options.git = false;
       }
       options.templates = collectRepeated(args.slice(1), '--template');
+      options.exclude = collectRepeated(args.slice(1), '--exclude');
       const result = await runInitWorkflow(options, { cwd: env.cwd });
       stdout.write(`Initialized ignorekit project at ${result.projectPath}\n`);
       return { exitCode: 0 };
@@ -502,6 +522,7 @@ async function runCli(args, env = {}) {
         options.preset = picked;
       }
       options.templates = collectRepeated(args.slice(1), '--template');
+      options.exclude = collectRepeated(args.slice(1), '--exclude');
       const result = await runAdoptWorkflow(options, { stdout, stderr, cwd: env.cwd });
       stdout.write(`Adopted ignorekit project at ${result.projectPath}\n`);
       return { exitCode: 0 };

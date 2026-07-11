@@ -1,0 +1,6 @@
+{
+  "name": "node-pnpm",
+  "base": "node",
+  "description": "Node.js project using pnpm.",
+  "components": ["package/pnpm"]
+}

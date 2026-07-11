@@ -9,23 +9,41 @@ components → presets → project custom rules → generated .gitignore
 ```
 
 - **Components** are atomic ignore rules: `platform/windows`, `language/java`, `build/gradle`, etc.
-- **Presets** are project-type templates that group components together: `java-gradle`, `frontend-vite`, `generic`, etc.
+- **Presets** are project-type templates that group components together. Presets can extend other presets via a `base` field, forming an inheritance chain: `django` extends `python` extends `generic`.
 - **Custom rules** are project-specific patterns that don't fit any component.
 
 You describe *what* your project is (via a preset + components + custom rules), and ignorekit generates the `.gitignore`. When you change the config, regenerate — same config always produces the same output.
 
 ## What is a preset?
 
-A preset is a **project type template**. It answers the question: "what kind of project is this?" Each preset bundles the components that make sense for that project type:
+A preset is a **project type template**. It answers the question: "what kind of project is this?" Each preset bundles the components that make sense for that project type. Presets can extend other presets — a `django` preset extends `python`, which extends `generic`. The base chain is resolved automatically: `django` gets all of `python`'s components plus `generic`'s, then adds its own.
 
-| Preset | Project type | What it includes |
-|--------|-------------|-----------------|
-| `generic` | Any project | platform, editor, secrets, logs, AI assistant |
-| `java-gradle` | Java + Gradle | generic + Java + Gradle + Java IDE metadata |
-| `java-maven` | Java + Maven | generic + Java + Maven + Java IDE metadata |
-| `frontend-vite` | Vue/React/Svelte + Vite | generic + Node + Vite |
-| `scientific` | Research / ML / data analysis | generic + scientific artifacts |
-| `blank` | Start from scratch | nothing — you build it yourself |
+| Preset | Base | Project type | Own components |
+|--------|------|-------------|----------------|
+| `generic` | — | Any project | platform, editor, secrets, logs, AI assistant |
+| `blank` | — | Start from scratch | none |
+| `node` | generic | Node.js project | language/node |
+| `node-pnpm` | node | Node.js + pnpm | package/pnpm |
+| `node-yarn` | node | Node.js + Yarn | package/yarn |
+| `vite` | node | Vite frontend project | framework/vite, testing/browser-e2e |
+| `next` | node | Next.js project | framework/next, testing/browser-e2e |
+| `nuxt` | vite | Nuxt project | framework/nuxt |
+| `sveltekit` | vite | SvelteKit project | framework/sveltekit |
+| `angular` | node | Angular project | framework/angular |
+| `java-gradle` | generic | Java + Gradle | language/java, build/gradle, editor/java-ide-metadata |
+| `java-maven` | generic | Java + Maven | language/java, build/maven, editor/java-ide-metadata |
+| `python` | generic | Python project | language/python, package/pip |
+| `python-poetry` | python | Python + Poetry | package/poetry |
+| `django` | python | Django web project | framework/django |
+| `flask` | python | Flask web project | framework/flask |
+| `rust` | generic | Rust project | language/rust |
+| `go` | generic | Go project | language/go |
+| `ruby` | generic | Ruby project | language/ruby |
+| `php` | generic | PHP project | language/php |
+| `c` | generic | C project | language/c |
+| `cpp` | generic | C++ project | language/cpp |
+| `cpp-cmake` | cpp | C++ + CMake | build/cmake |
+| `scientific` | generic | Research / ML / data analysis | domain/scientific-artifacts |
 
 Presets are **starting points**, not cages. You can always add extra components or custom rules on top.
 
@@ -36,7 +54,7 @@ Presets are **starting points**, not cages. You can always add extra components 
 ```bash
 ignorekit list                # all components and presets
 ignorekit list components     # just components
-ignorekit list presets        # just presets
+ignorekit list presets        # just presets (shows inheritance chain)
 ```
 
 ### `init` — Start a new project
@@ -44,7 +62,8 @@ ignorekit list presets        # just presets
 ```bash
 ignorekit init                                    # interactive: pick preset, use current dir
 ignorekit init ./my-app --preset java-gradle --git
-ignorekit init ./web-app --preset frontend-vite --no-git
+ignorekit init ./web-app --preset vite --no-git
+ignorekit init ./my-app --preset node --exclude platform/windows
 ```
 
 If `--preset` is omitted, an interactive picker shows all presets with the best match suggested.
@@ -55,6 +74,7 @@ If `--preset` is omitted, an interactive picker shows all presets with the best 
 ignorekit adopt                                   # interactive: analyze, pick preset, preview
 ignorekit adopt --preset java-gradle              # use current directory
 ignorekit adopt --preset java-gradle --apply      # overwrite .gitignore directly
+ignorekit adopt --preset node --exclude platform/windows
 ```
 
 Adopt analyzes your existing `.gitignore`, shows what's already covered by components, carries over custom rules, and generates a `.gitignore.preview` for review.
@@ -75,7 +95,7 @@ ignorekit explain ./ignorekit.json
 ignorekit explain ./ignorekit.json --verbose
 ```
 
-Shows what each component in your config contributes, like `EXPLAIN` in SQL. No generation — just transparency.
+Shows what each component in your config contributes, grouped by inheritance level. Like `EXPLAIN` in SQL — no generation, just transparency.
 
 ### `analyze` — Reverse-engineer a .gitignore
 
@@ -112,6 +132,7 @@ Projects use `ignorekit.json`:
   "name": "my-project",
   "preset": "java-gradle",
   "components": ["local/ai-codegraph"],
+  "exclude": ["platform/windows"],
   "custom": [
     "MIGRATION.md",
     "src/main/resources/application-local.yml"
@@ -119,8 +140,9 @@ Projects use `ignorekit.json`:
 }
 ```
 
-- `preset` — base project type template
+- `preset` — base project type template (resolves the full inheritance chain)
 - `components` — extra components on top of the preset
+- `exclude` — components from the preset chain to omit (e.g., `platform/windows` on a Windows-only team)
 - `custom` — project-specific patterns (always the last section in the generated file)
 
 ## Components
@@ -129,9 +151,11 @@ Projects use `ignorekit.json`:
 |----------|-----------|
 | Platform | `platform/macos`, `platform/windows` |
 | Editor | `editor/jetbrains`, `editor/vscode`, `editor/temporary-files`, `editor/java-ide-metadata` |
-| Language | `language/java`, `language/node` |
-| Build | `build/gradle`, `build/maven` |
-| Framework | `framework/vite` |
+| Language | `language/java`, `language/node`, `language/python`, `language/rust`, `language/go`, `language/ruby`, `language/php`, `language/c`, `language/cpp` |
+| Build | `build/gradle`, `build/maven`, `build/cmake` |
+| Package | `package/pip`, `package/poetry`, `package/pnpm`, `package/yarn` |
+| Framework | `framework/vite`, `framework/next`, `framework/nuxt`, `framework/angular`, `framework/sveltekit`, `framework/django`, `framework/flask` |
+| Testing | `testing/browser-e2e` |
 | Domain | `domain/scientific-artifacts` |
 | Local | `local/env-secrets`, `local/logs` |
 | AI tools | `local/ai-claude`, `local/ai-gemini`, `local/ai-codex`, `local/ai-codegraph` |

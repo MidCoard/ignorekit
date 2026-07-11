@@ -1,0 +1,6 @@
+{
+  "name": "django",
+  "base": "python",
+  "description": "Django web project.",
+  "components": ["framework/django"]
+}
