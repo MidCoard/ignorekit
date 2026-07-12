@@ -91,6 +91,32 @@ bin/
   }
 });
 
+test('analyze prefers Vite when package.json identifies Vite over generic matching', () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/platform/macos.gitignore', '.DS_Store\n');
+    workspace.writeText('dist/components/language/node.gitignore', 'node_modules/\n');
+    workspace.writeText('dist/components/framework/vite.gitignore', 'dist/\n');
+    workspace.writeJson('dist/presets/generic.json', { name: 'generic', components: ['platform/macos'] });
+    workspace.writeJson('dist/presets/node.json', { name: 'node', base: 'generic', components: ['language/node'] });
+    workspace.writeJson('dist/presets/vite.json', { name: 'vite', base: 'node', components: ['framework/vite'] });
+    workspace.writeJson('project/package.json', { scripts: { dev: 'vite' }, devDependencies: { vite: '^5.0.0' } });
+    workspace.writeText('project/.gitignore', '.DS_Store\n');
+
+    let output = '';
+    const result = runAnalyzeWorkflow({
+      gitignorePath: workspace.path('project/.gitignore'),
+      distRoot: workspace.path('dist'),
+      suggestPreset: true
+    }, { stdout: { write: text => { output += text; } }, cwd: workspace.root });
+
+    assert.equal(result.bestPreset.id, 'vite');
+    assert.match(output, /Vite detected in package.json/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('analyze with fully covered .gitignore has no unmatched lines', () => {
   const workspace = createTempWorkspace();
   try {
@@ -113,6 +139,27 @@ test('analyze with fully covered .gitignore has no unmatched lines', () => {
 
     assert.equal(result.unmatchedLines.length, 0, 'All lines should be covered');
     assert.match(output, /none — all lines are covered/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('analyze hides one-rule partial matches that share a generic output directory', () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/framework/next.gitignore', '.next/\nout/\n');
+    workspace.writeText('dist/components/build/gradle.gitignore', '.gradle/\nbuild/\n.gradle-cache/\nreports/\n');
+    workspace.writeText('.gitignore', '.gradle/\nbuild/\nout/\n');
+
+    let output = '';
+    const result = runAnalyzeWorkflow({
+      gitignorePath: workspace.path('.gitignore'),
+      distRoot: workspace.path('dist')
+    }, { stdout: { write: text => { output += text; } }, cwd: workspace.root });
+
+    assert.match(output, /build\/gradle/);
+    assert.doesNotMatch(output, /framework\/next/);
+    assert.deepEqual(result.matchedComponents.map(component => component.id), ['build/gradle']);
   } finally {
     workspace.cleanup();
   }

@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { writeJson } = require('../core/json');
 const { DIST_ROOT } = require('../core/path');
+const { parseSignificantLines } = require('../core/text');
 const { buildProjectConfig } = require('../config/build-config');
 const { createDefinitionResolver, resolvePresetComponents } = require('../definitions/resolver');
 const { generateGitignore } = require('../generator');
@@ -58,9 +59,9 @@ async function runAdoptWorkflow(options, env) {
 
     stdout.write('Analyzing existing .gitignore...\n\n');
 
-    if (analysis.matchedComponents.length > 0) {
-      stdout.write(`Already covered by ${analysis.matchedComponents.length} known component(s):\n`);
-      for (const comp of analysis.matchedComponents) {
+    if (analysis.displayMatchedComponents.length > 0) {
+      stdout.write(`Already covered by ${analysis.displayMatchedComponents.length} known component(s):\n`);
+      for (const comp of analysis.displayMatchedComponents) {
         const status = comp.classification === 'full' ? '✓ full' : '✗ partial';
         stdout.write(`  ${comp.id.padEnd(24)} ${comp.matched.length}/${comp.total} rules ${status}\n`);
       }
@@ -68,7 +69,7 @@ async function runAdoptWorkflow(options, env) {
     }
 
     if (analysis.unmatchedLines.length > 0) {
-      stdout.write(`Custom rules not covered by any component (${analysis.unmatchedLines.length}):\n`);
+      stdout.write(`Rules needing review (${analysis.unmatchedLines.length}):\n`);
       for (const line of analysis.unmatchedLines) {
         stdout.write(`  ${line}\n`);
       }
@@ -129,13 +130,36 @@ async function runAdoptWorkflow(options, env) {
   // Build and write config
   const config = buildProjectConfig(path.basename(projectPath), options);
 
-  // Carry over unmatched lines from analysis as custom rules
-  if (analysis && analysis.unmatchedLines.length > 0) {
-    // Deduplicate (some .gitignore files have the same rule twice)
+  // Keep only rules that the chosen preset and extra components do not cover.
+  if (analysis) {
+    const resolver = createDefinitionResolver({
+      distRoot,
+      userRoot: options.userRoot,
+      workspaceRoot: options.workspaceRoot,
+      projectRoot: path.join(projectPath, '.ignorekit')
+    });
+    const selectedComponentIds = new Set(options.components || []);
+    try {
+      for (const id of resolvePresetComponents(resolver, options.preset)) {
+        selectedComponentIds.add(id);
+      }
+    } catch {
+      // The generator reports invalid presets with its usual error message.
+    }
+    const coveredRules = new Set();
+    for (const id of selectedComponentIds) {
+      const result = analysis.componentResults.get(id);
+      if (result) {
+        for (const line of result.matched) coveredRules.add(line);
+      }
+    }
+
+    // Deduplicate (some .gitignore files have the same rule twice).
     const seen = new Set();
     const customRules = [];
-    for (const line of analysis.unmatchedLines) {
-      if (!seen.has(line)) {
+    const existingRules = parseSignificantLines(fs.readFileSync(existingGitignorePath, 'utf8'));
+    for (const line of existingRules) {
+      if (!coveredRules.has(line) && !seen.has(line)) {
         seen.add(line);
         customRules.push(line);
       }

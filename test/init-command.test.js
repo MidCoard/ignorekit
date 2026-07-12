@@ -37,6 +37,30 @@ test('init with --preset skips interactive picker', async () => {
   }
 });
 
+test('init --git reports when the target is already a Git repository', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    fs.mkdirSync(workspace.path('project/.git'), { recursive: true });
+    const output = [];
+
+    const result = await runCli([
+      'init', workspace.path('project'), '--preset', 'demo', '--git',
+      '--dist-root', workspace.path('dist')
+    ], {
+      stdout: { write: text => output.push(String(text)) },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.match(output.join(''), /Git: already present/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('init defaults path to current directory', async () => {
   const workspace = createTempWorkspace();
   try {

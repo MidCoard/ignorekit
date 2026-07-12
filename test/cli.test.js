@@ -51,6 +51,21 @@ test('help <command> prints detailed help', async () => {
   assert.match(output, /--no-git/);
 });
 
+test('help create describes interactive component and preset creation', async () => {
+  const writes = [];
+  const result = await runCli(['help', 'create'], {
+    stdout: { write: text => writes.push(String(text)) },
+    stderr: { write: () => {} },
+    cwd: process.cwd()
+  });
+
+  assert.equal(result.exitCode, 0);
+  const output = writes.join('');
+  assert.match(output, /create component/);
+  assert.match(output, /--category/);
+  assert.match(output, /create preset/);
+});
+
 test('help for unknown command falls back to general help', async () => {
   const writes = [];
   const result = await runCli(['help', 'nonexistent'], {

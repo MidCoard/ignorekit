@@ -20,7 +20,7 @@ A preset is a **project type template**. It answers the question: "what kind of 
 
 | Preset | Base | Project type | Own components |
 |--------|------|-------------|----------------|
-| `generic` | — | Any project | platform, editor, secrets, logs, AI assistant |
+| `generic` | — | Any project | platform, editor, secrets, logs |
 | `blank` | — | Start from scratch | none |
 | `node` | generic | Node.js project | language/node |
 | `node-pnpm` | node | Node.js + pnpm | package/pnpm |
@@ -75,9 +75,10 @@ ignorekit adopt                                   # interactive: analyze, pick p
 ignorekit adopt --preset java-gradle              # use current directory
 ignorekit adopt --preset java-gradle --apply      # overwrite .gitignore directly
 ignorekit adopt --preset node --exclude platform/windows
+ignorekit adopt --preset java-gradle --component language/node  # mixed project
 ```
 
-Adopt analyzes your existing `.gitignore`, shows what's already covered by components, carries over custom rules, and generates a `.gitignore.preview` for review without changing the current `.gitignore`.
+Adopt analyzes your existing `.gitignore`, shows strong component matches, carries over only rules not covered by your chosen preset or extra components, and generates a `.gitignore.preview` for review without changing the current `.gitignore`. Use repeatable `--component <id>` options for mixed projects; the selected components are saved in `ignorekit.json`.
 
 ### `generate` — Build .gitignore from config
 
@@ -104,7 +105,22 @@ ignorekit analyze ./.gitignore
 ignorekit analyze ./.gitignore --suggest-preset
 ```
 
-Matches lines against known components, shows coverage, identifies custom rules, and suggests the best preset.
+Matches lines against known components, shows coverage, identifies custom rules, and suggests the best preset. Standard project manifests such as `package.json`, `build.gradle`, and `pom.xml` improve suggestions without changing extracted rules.
+
+### `create` — Create reusable definitions
+
+```bash
+ignorekit create component                             # guided rule selection and review
+ignorekit create component runtime --category local --from ./.gitignore
+ignorekit create component docker --category deployment --rule docker-compose.override.yml
+ignorekit create preset                                # guided base and component selection
+ignorekit create preset team-vite --base vite --component local/runtime
+```
+
+Components use a separate category and name; `runtime` with category `local`
+is stored as `components/local/runtime.gitignore`. Guided creation lists every
+candidate rule or component, lets you choose a subset, then shows the final
+output path before it writes anything.
 
 ### `extract` — Create a reusable component
 
@@ -113,7 +129,9 @@ ignorekit extract component local/custom --from ./.gitignore    # smart: only un
 ignorekit extract component local/runtime --from ./.gitignore --full  # entire file
 ```
 
-Analyzes the `.gitignore` first, then extracts only the lines not covered by any known component.
+`extract` remains a compatibility command for smart unmatched-rule extraction.
+Run `ignorekit extract` with no arguments to use the same guided component
+creation flow as `ignorekit create component`.
 
 ### `preset` — Create a preset definition
 
@@ -121,6 +139,8 @@ Analyzes the `.gitignore` first, then extracts only the lines not covered by any
 ignorekit preset create my-stack --component language/java --component language/node
 ignorekit preset create java-extended --base java-gradle --component local/custom
 ```
+
+`ignorekit preset` with no arguments opens the guided preset creation flow.
 
 ## Project config
 
@@ -172,7 +192,7 @@ team shares definitions from another directory.
 | Local | `local/env-secrets`, `local/logs` |
 | AI tools | `local/ai-claude`, `local/ai-gemini`, `local/ai-codex`, `local/ai-codegraph` |
 
-AI tool components are opt-in — only `local/ai-claude` is included in presets by default. Add others as extra components in your `ignorekit.json`.
+AI tool components are opt-in. Add the tools your project actually uses as extra components in `ignorekit.json`.
 
 ## Running tests
 

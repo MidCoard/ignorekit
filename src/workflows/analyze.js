@@ -6,6 +6,7 @@ const { readJson } = require('../core/json');
 const { parseSignificantLines } = require('../core/text');
 const { createDefinitionResolver, resolvePresetComponents } = require('../definitions/resolver');
 const { DIST_ROOT } = require('../core/path');
+const { detectProjectSignals } = require('../detection/project-signals');
 
 /**
  * Normalize a gitignore pattern for matching purposes.
@@ -143,6 +144,7 @@ function scorePreset(presetComponents, componentResults, totalInputLines = 0) {
  */
 function analyzeGitignore(options) {
   const gitignorePath = path.resolve(options.gitignorePath);
+  const projectPath = path.dirname(gitignorePath);
   const rawContent = fs.readFileSync(gitignorePath, 'utf8');
   const inputLines = parseSignificantLines(rawContent);
   const totalInputLines = inputLines.length;
@@ -152,8 +154,11 @@ function analyzeGitignore(options) {
     distRoot,
     userRoot: options.userRoot,
     workspaceRoot: options.workspaceRoot,
-    projectRoot: path.join(path.dirname(gitignorePath), '.ignorekit')
+    projectRoot: path.join(projectPath, '.ignorekit')
   });
+  const signalByPreset = new Map(
+    detectProjectSignals(projectPath).map(signal => [signal.preset, signal])
+  );
 
   // Load all components and match
   const componentIds = resolver.listComponents();
@@ -186,6 +191,9 @@ function analyzeGitignore(options) {
     if (a.classification !== 'full' && b.classification === 'full') return 1;
     return b.ratio - a.ratio;
   });
+  const displayMatchedComponents = matchedComponents.filter(component =>
+    component.classification === 'full' || component.matched.length >= 2
+  );
 
   // Compute matched lines coverage (use normalized patterns for dedup)
   const allMatchedNormalized = new Set();
@@ -208,8 +216,16 @@ function analyzeGitignore(options) {
     for (const presetId of presetIds) {
       try {
         const presetComponents = resolvePresetComponents(resolver, presetId);
-        const score = scorePreset(presetComponents, componentResults, totalInputLines);
-        allPresets.push({ id: presetId, ...score, componentCount: presetComponents.length, components: presetComponents });
+        const ruleScore = scorePreset(presetComponents, componentResults, totalInputLines);
+        const signal = signalByPreset.get(presetId);
+        allPresets.push({
+          id: presetId,
+          ...ruleScore,
+          score: ruleScore.score + (signal ? signal.strength : 0),
+          componentCount: presetComponents.length,
+          components: presetComponents,
+          evidence: signal ? [signal.evidence] : []
+        });
       } catch {
         // Skip presets with broken base chains
       }
@@ -224,6 +240,7 @@ function analyzeGitignore(options) {
   return {
     totalLines: totalInputLines,
     matchedComponents,
+    displayMatchedComponents,
     unmatchedLines,
     componentResults,
     bestPreset,
@@ -259,12 +276,20 @@ function runAnalyzeWorkflow(options, env) {
   stdout.write(`Analyzing: ${path.basename(options.gitignorePath)} (${analysis.totalLines} significant lines)\n\n`);
 
   // Print matched components
+  const displayMatchedComponents = analysis.displayMatchedComponents;
+  const displayedRules = new Set();
+  for (const component of displayMatchedComponents) {
+    for (const line of component.matched) displayedRules.add(normalizePattern(line));
+  }
+  const displayedUnmatchedLines = parseSignificantLines(
+    fs.readFileSync(path.resolve(cwd, options.gitignorePath), 'utf8')
+  ).filter(line => !displayedRules.has(normalizePattern(line)));
   const coveragePercent = analysis.totalLines > 0
-    ? Math.round((analysis.matchedComponents.reduce((sum, c) => sum + c.matched.length, 0) / analysis.totalLines) * 100)
+    ? Math.round((displayMatchedComponents.reduce((sum, c) => sum + c.matched.length, 0) / analysis.totalLines) * 100)
     : 0;
 
   stdout.write(`Matched components (${coveragePercent}% coverage):\n`);
-  for (const comp of analysis.matchedComponents) {
+  for (const comp of displayMatchedComponents) {
     const status = comp.classification === 'full' ? '✓ full match' : '✗ partial';
     const matchLabel = `${comp.matched.length}/${comp.total} rules matched`;
     const pad = 24;
@@ -278,11 +303,11 @@ function runAnalyzeWorkflow(options, env) {
   stdout.write('\n');
 
   // Print unmatched lines
-  stdout.write(`Unmatched lines (${analysis.unmatchedLines.length}):\n`);
-  if (analysis.unmatchedLines.length === 0) {
+  stdout.write(`Unmatched lines (${displayedUnmatchedLines.length}):\n`);
+  if (displayedUnmatchedLines.length === 0) {
     stdout.write('  (none — all lines are covered by matched components)\n');
   } else {
-    for (const line of analysis.unmatchedLines) {
+    for (const line of displayedUnmatchedLines) {
       stdout.write(`  ${line}\n`);
     }
   }
@@ -292,12 +317,18 @@ function runAnalyzeWorkflow(options, env) {
   if (options.suggestPreset) {
     if (analysis.allPresets.length > 0) {
       stdout.write('Preset suggestions:\n');
-      for (const ps of analysis.allPresets) {
+      for (const ps of analysis.allPresets.slice(0, 3)) {
         const matchLabel = `${ps.fullCount} of ${ps.componentCount} preset components fully matched`;
         stdout.write(`  ${ps.id.padEnd(24)} ${matchLabel} (score: ${ps.score})\n`);
+        for (const evidence of ps.evidence) {
+          stdout.write(`    ${evidence}\n`);
+        }
       }
       stdout.write('\n');
       stdout.write(`Best preset match: ${analysis.bestPreset.id} (${analysis.bestPreset.fullCount} of ${analysis.bestPreset.componentCount} preset components fully matched)\n`);
+      for (const evidence of analysis.bestPreset.evidence) {
+        stdout.write(`  ${evidence}\n`);
+      }
     } else {
       stdout.write('No presets available for suggestion.\n');
     }
@@ -306,9 +337,15 @@ function runAnalyzeWorkflow(options, env) {
 
   return {
     totalLines: analysis.totalLines,
-    matchedComponents: analysis.matchedComponents.map(c => ({ id: c.id, matched: c.matched.length, total: c.total, classification: c.classification })),
-    unmatchedLines: analysis.unmatchedLines,
-    bestPreset: analysis.bestPreset ? { id: analysis.bestPreset.id, score: analysis.bestPreset.score, fullCount: analysis.bestPreset.fullCount, componentCount: analysis.bestPreset.componentCount } : null
+    matchedComponents: displayMatchedComponents.map(c => ({ id: c.id, matched: c.matched.length, total: c.total, classification: c.classification })),
+    unmatchedLines: displayedUnmatchedLines,
+    bestPreset: analysis.bestPreset ? {
+      id: analysis.bestPreset.id,
+      score: analysis.bestPreset.score,
+      fullCount: analysis.bestPreset.fullCount,
+      componentCount: analysis.bestPreset.componentCount,
+      evidence: analysis.bestPreset.evidence
+    } : null
   };
 }
 

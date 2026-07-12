@@ -42,11 +42,11 @@ async function runInitWorkflow(options, env) {
   writeJson(configPath, config);
   fs.writeFileSync(gitignorePath, gitignore, 'utf8');
 
-  if (options.git) {
-    ensureGitRepo(projectPath, { allowNested: options.allowNestedGit });
-  }
+  const git = options.git
+    ? ensureGitRepo(projectPath, { allowNested: options.allowNestedGit })
+    : null;
 
-  return { projectPath, configPath };
+  return { projectPath, configPath, git };
 }
 
 module.exports = { runInitWorkflow };

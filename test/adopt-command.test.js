@@ -32,6 +32,34 @@ test('adopt with --preset skips interactive picker', async () => {
   }
 });
 
+test('adopt keeps explicit extra components and avoids duplicating selected preset rules as custom', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/language/java.gitignore', [
+      '*.class', 'out/', 'bin/', '.settings/', '.classpath', '.project'
+    ].join('\n') + '\n');
+    workspace.writeText('dist/components/language/node.gitignore', 'node_modules/\n.vite/\n');
+    workspace.writeJson('dist/presets/java.json', { name: 'java', components: ['language/java'] });
+    workspace.writeText('project/.gitignore', '*.class\nnode_modules/\n.vite/\nproject-private/\n');
+
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'java',
+      '--component', 'language/node', '--dist-root', workspace.path('dist')
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    const config = JSON.parse(workspace.readText('project/ignorekit.json'));
+    assert.deepEqual(config.components, ['language/node']);
+    assert.deepEqual(config.custom, ['project-private/']);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('adopt defaults path to current directory', async () => {
   const workspace = createTempWorkspace();
   try {

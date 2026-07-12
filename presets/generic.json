@@ -1,6 +1,6 @@
 {
   "name": "generic",
-  "description": "Generic project — platform, editor, local secrets, logs, and assistant artifacts. Works for any project type.",
+  "description": "Generic project with platform, editor, local secrets, and logs. Works for any project type.",
   "components": [
     "platform/macos",
     "platform/windows",
@@ -8,8 +8,6 @@
     "editor/vscode",
     "editor/temporary-files",
     "local/env-secrets",
-    "local/logs",
-    "local/ai-claude"
+    "local/logs"
   ]
 }
-

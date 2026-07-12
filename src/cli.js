@@ -11,6 +11,8 @@ const { runInitWorkflow } = require('./workflows/init');
 const { runAdoptWorkflow } = require('./workflows/adopt');
 const { runExtractComponent } = require('./workflows/extract');
 const { runPresetCreate } = require('./workflows/preset');
+const { runComponentCreate } = require('./workflows/component');
+const { promptComponentCreation, promptPresetCreation } = require('./interactive/create');
 const { runExplainWorkflow } = require('./workflows/explain');
 const { runAnalyzeWorkflow, analyzeGitignore } = require('./workflows/analyze');
 
@@ -71,6 +73,7 @@ Commands:
   init        Initialize a new project with config and .gitignore
   adopt       Adopt an existing project into ignorekit
   extract     Extract a reusable component from an existing .gitignore
+  create      Create a component or preset definition
   preset      Create a new preset definition
 
 Run 'ignorekit help <command>' for detailed usage.
@@ -127,6 +130,7 @@ Arguments:
 
 Options:
   --preset <name>        Preset to use (if omitted, shows interactive picker)
+  --component <id>       Add a component alongside the chosen preset (repeatable)
   --provider <name>      Provider name: local (default) or gitignore.io
   --git                  Run git init in the project directory
   --no-git               Skip git init (default)
@@ -199,10 +203,37 @@ Use --output-root .ignorekit to write to the project-local directory instead.
 By default, extract first analyzes the .gitignore against known components,
 then extracts only the unmatched (custom) rules as a new component.
 Use --full to skip analysis and extract the entire file.
+Run extract with no arguments for guided component creation and rule selection.
 
 Examples:
   ignorekit extract component local/runtime --from ./my-project/.gitignore
   ignorekit extract component local/custom --from ./.gitignore --full
+`,
+    create: `ignorekit create - Create reusable definitions
+
+Usage:
+  ignorekit create component [name] [options]
+  ignorekit create preset [name] [options]
+
+With no name, create opens a guided review where you can revise each choice
+before writing the final file.
+
+Component options:
+  --category <name>       Component category, for example local or framework
+  --from <path>           Read candidate rules from a .gitignore file
+  --rule <pattern>        Include one rule (repeatable)
+  --output-root <path>    Definition root (default: ~/.ignorekit)
+  --overwrite             Replace an existing component
+
+Preset options:
+  --base <name>           Base preset to extend
+  --component <id>        Include a component (repeatable)
+  --output-root <path>    Definition root (default: ~/.ignorekit)
+
+Examples:
+  ignorekit create component runtime --category local --from ./.gitignore
+  ignorekit create component docker --category deployment --rule docker-compose.override.yml
+  ignorekit create preset team-vite --base vite --component local/runtime
 `,
     explain: `ignorekit explain - Explain what an ignorekit.json config produces
 
@@ -262,6 +293,7 @@ Options:
 By default, created presets are written to ~/.ignorekit/presets/ so they
 are available to all projects via the user definitions layer.
 Use --output-root .ignorekit to write to the project-local directory instead.
+Run preset with no arguments for guided base and component selection.
 
 Examples:
   ignorekit preset create java-gradle-extended --base java-gradle --component local/runtime
@@ -451,6 +483,41 @@ function readLine(stdin, stdout, prompt) {
   });
 }
 
+async function runWithQuestions(env, operation) {
+  if (env.ask) {
+    return operation(prompt => Promise.resolve(env.ask(prompt)));
+  }
+
+  const rl = readline.createInterface({ input: env.stdin || process.stdin });
+  const stdout = env.stdout || process.stdout;
+  const queuedLines = [];
+  const pendingQuestions = [];
+  let closed = false;
+
+  rl.on('line', line => {
+    const pending = pendingQuestions.shift();
+    if (pending) pending(line);
+    else queuedLines.push(line);
+  });
+  rl.on('close', () => {
+    closed = true;
+    while (pendingQuestions.length > 0) pendingQuestions.shift()('');
+  });
+
+  function ask(prompt) {
+    stdout.write(prompt);
+    if (queuedLines.length > 0) return Promise.resolve(queuedLines.shift());
+    if (closed) return Promise.resolve('');
+    return new Promise(resolve => pendingQuestions.push(resolve));
+  }
+
+  try {
+    return await operation(ask);
+  } finally {
+    rl.close();
+  }
+}
+
 // --- Command dispatch ---
 // review #13 by-design: runCli uses a sequential if/else dispatch block.
 // Future refactor target: extract to a command registry pattern for extensibility.
@@ -523,6 +590,11 @@ async function runCli(args, env = {}) {
       options.exclude = collectRepeated(args.slice(1), '--exclude');
       const result = await runInitWorkflow(options, { cwd: env.cwd });
       stdout.write(`Initialized ignorekit project at ${result.projectPath}\n`);
+      if (result.git && result.git.action === 'initialized') {
+        stdout.write('Git: initialized\n');
+      } else if (result.git && result.git.action === 'skipped') {
+        stdout.write('Git: already present\n');
+      }
       return { exitCode: 0 };
     }
 
@@ -536,6 +608,7 @@ async function runCli(args, env = {}) {
         options.preset = picked;
       }
       options.templates = collectRepeated(args.slice(1), '--template');
+      options.components = collectRepeated(args.slice(1), '--component');
       options.exclude = collectRepeated(args.slice(1), '--exclude');
       const result = await runAdoptWorkflow(options, { stdout, stderr, cwd: env.cwd });
       stdout.write(`Adopted ignorekit project at ${result.projectPath}\n`);
@@ -546,6 +619,17 @@ async function runCli(args, env = {}) {
     if (command === 'extract') {
       const subcommand = args[1];
       if (subcommand !== 'component') {
+        if (!subcommand || subcommand.startsWith('--')) {
+          let options = parseArgs(args.slice(1));
+          const draft = await runWithQuestions(env, ask => promptComponentCreation(options, {
+            cwd: env.cwd || process.cwd(), stdout, ask
+          }));
+          if (!draft) return { exitCode: 1 };
+          options = { ...options, ...draft };
+          const result = runComponentCreate(options, { cwd: env.cwd });
+          stdout.write(`Created component ${result.id} at ${result.outputPath}\n`);
+          return { exitCode: 0 };
+        }
         throw new Error('extract supports only: component');
       }
       const options = parseArgs(args.slice(2));
@@ -557,10 +641,56 @@ async function runCli(args, env = {}) {
       return { exitCode: 0 };
     }
 
+    // Create
+    if (command === 'create') {
+      const subcommand = args[1];
+      let options = parseArgs(args.slice(2));
+      if (subcommand === 'component') {
+        options.name = options._[0];
+        options.rules = collectRepeated(args.slice(2), '--rule');
+        if (!options.name) {
+          const draft = await runWithQuestions(env, ask => promptComponentCreation(options, {
+            cwd: env.cwd || process.cwd(), stdout, ask
+          }));
+          if (!draft) return { exitCode: 1 };
+          options = { ...options, ...draft };
+        }
+        const result = runComponentCreate(options, { cwd: env.cwd });
+        stdout.write(`Created component ${result.id} at ${result.outputPath}\n`);
+        return { exitCode: 0 };
+      }
+      if (subcommand === 'preset') {
+        options.name = options._[0];
+        options.components = collectRepeated(args.slice(2), '--component');
+        if (!options.name) {
+          const draft = await runWithQuestions(env, ask => promptPresetCreation(options, {
+            cwd: env.cwd || process.cwd(), stdout, ask
+          }));
+          if (!draft) return { exitCode: 1 };
+          options = { ...options, ...draft };
+        }
+        const result = runPresetCreate(options, { cwd: env.cwd });
+        stdout.write(`Created preset ${result.outputPath}\n`);
+        return { exitCode: 0 };
+      }
+      throw new Error('create supports: component, preset');
+    }
+
     // Preset
     if (command === 'preset') {
       const subcommand = args[1];
       if (subcommand !== 'create') {
+        if (!subcommand || subcommand.startsWith('--')) {
+          let options = parseArgs(args.slice(1));
+          const draft = await runWithQuestions(env, ask => promptPresetCreation(options, {
+            cwd: env.cwd || process.cwd(), stdout, ask
+          }));
+          if (!draft) return { exitCode: 1 };
+          options = { ...options, ...draft };
+          const result = runPresetCreate(options, { cwd: env.cwd });
+          stdout.write(`Created preset ${result.outputPath}\n`);
+          return { exitCode: 0 };
+        }
         throw new Error('preset supports only: create');
       }
       const options = parseArgs(args.slice(2));
