@@ -40,11 +40,19 @@ async function runAdoptWorkflow(options, env) {
     throw new Error(`Project path does not exist: ${projectPath}`);
   }
   if (options.removeCached && !options.apply) {
-    throw new Error('--remove-cached requires --apply so Git uses the generated .gitignore');
+    throw new Error('--remove-cached requires --apply so cached file removal uses the generated .gitignore');
   }
 
   const distRoot = options.distRoot || DIST_ROOT;
   const warnings = [];
+
+  // Create resolver once — reused throughout
+  const resolver = createDefinitionResolver({
+    distRoot,
+    userRoot: options.userRoot,
+    workspaceRoot: options.workspaceRoot,
+    projectRoot: path.join(projectPath, '.ignorekit')
+  });
 
   // Analyze existing .gitignore if present
   let analysis = null;
@@ -77,13 +85,6 @@ async function runAdoptWorkflow(options, env) {
     }
 
     // Compare chosen preset against analysis
-    const resolver = createDefinitionResolver({
-      distRoot,
-      userRoot: options.userRoot,
-      workspaceRoot: options.workspaceRoot,
-      projectRoot: path.join(projectPath, '.ignorekit')
-    });
-
     try {
       const presetComponents = resolvePresetComponents(resolver, options.preset);
 
@@ -132,12 +133,6 @@ async function runAdoptWorkflow(options, env) {
 
   // Keep only rules that the chosen preset and extra components do not cover.
   if (analysis) {
-    const resolver = createDefinitionResolver({
-      distRoot,
-      userRoot: options.userRoot,
-      workspaceRoot: options.workspaceRoot,
-      projectRoot: path.join(projectPath, '.ignorekit')
-    });
     const selectedComponentIds = new Set(options.components || []);
     try {
       for (const id of resolvePresetComponents(resolver, options.preset)) {
@@ -171,20 +166,36 @@ async function runAdoptWorkflow(options, env) {
   if (fs.existsSync(configPath) && !options.overwriteConfig) {
     throw new Error(`Config already exists: ${configPath}. Use --overwrite-config to replace.`);
   }
-  // Generate .gitignore
-  const resolver = createDefinitionResolver({
-    distRoot,
-    userRoot: options.userRoot,
-    workspaceRoot: options.workspaceRoot,
-    projectRoot: path.join(projectPath, '.ignorekit')
-  });
-  const gitignore = await generateGitignore({ config, resolver });
-  const outputName = options.apply ? '.gitignore' : '.gitignore.preview';
-  const outputLabel = options.apply ? '.gitignore' : '.gitignore.preview';
-  writeJson(configPath, config);
-  fs.writeFileSync(path.join(projectPath, outputName), gitignore, 'utf8');
 
-  stdout.write(`Generated ${outputLabel}\n`);
+  // Generate .gitignore
+  const gitignore = await generateGitignore({ config, resolver });
+  const gitignorePath = path.join(projectPath, '.gitignore');
+
+  // Show preview in console
+  stdout.write(`\n--- Preview ---\n`);
+  stdout.write(gitignore);
+  stdout.write(`--- End preview ---\n\n`);
+
+  // Confirm before writing (if env.confirm provided)
+  if (env.confirm) {
+    const proceed = await env.confirm();
+    if (!proceed) {
+      stdout.write('Cancelled — no files written.\n');
+      return { projectPath, configPath: null, cachedRemoval: { action: 'skipped', files: [] }, analysis, warnings };
+    }
+  }
+
+  // Backup existing .gitignore before overwriting
+  if (fs.existsSync(gitignorePath)) {
+    const backupPath = path.join(projectPath, '.gitignore.bak');
+    fs.copyFileSync(gitignorePath, backupPath);
+    stdout.write(`Backup saved to .gitignore.bak\n`);
+  }
+
+  writeJson(configPath, config);
+  fs.writeFileSync(gitignorePath, gitignore, 'utf8');
+
+  stdout.write(`Generated .gitignore\n`);
 
   // Handle cached file removal
   let cachedRemoval = { action: 'skipped', files: [] };

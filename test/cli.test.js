@@ -31,8 +31,7 @@ test('help prints the command list', async () => {
   assert.match(output, /generate/);
   assert.match(output, /init/);
   assert.match(output, /adopt/);
-  assert.match(output, /extract/);
-  assert.match(output, /preset/);
+  assert.match(output, /create/);
   assert.match(output, /list/);
 });
 

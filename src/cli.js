@@ -9,9 +9,8 @@ const { createDefinitionResolver, resolvePresetChain } = require('./definitions/
 const { generateGitignore } = require('./generator');
 const { runInitWorkflow } = require('./workflows/init');
 const { runAdoptWorkflow } = require('./workflows/adopt');
-const { runExtractComponent } = require('./workflows/extract');
-const { runPresetCreate } = require('./workflows/preset');
 const { runComponentCreate } = require('./workflows/component');
+const { runPresetCreate } = require('./workflows/preset');
 const { promptComponentCreation, promptPresetCreation } = require('./interactive/create');
 const { runExplainWorkflow } = require('./workflows/explain');
 const { runAnalyzeWorkflow, analyzeGitignore } = require('./workflows/analyze');
@@ -21,7 +20,7 @@ const { runAnalyzeWorkflow, analyzeGitignore } = require('./workflows/analyze');
 const BOOLEAN_OPTIONS = new Set([
   'all', 'yes', 'git', 'noGit', 'dryRun', 'preview',
   'overwrite', 'overwriteConfig', 'removeCached',
-  'allowNestedGit', 'apply', 'verbose', 'suggestPreset', 'full'
+  'allowNestedGit', 'apply', 'verbose', 'suggestPreset'
 ]);
 
 function parseArgs(args) {
@@ -72,9 +71,7 @@ Commands:
   analyze     Analyze a .gitignore against known components
   init        Initialize a new project with config and .gitignore
   adopt       Adopt an existing project into ignorekit
-  extract     Extract a reusable component from an existing .gitignore
   create      Create a component or preset definition
-  preset      Create a new preset definition
 
 Run 'ignorekit help <command>' for detailed usage.
 `);
@@ -160,7 +157,6 @@ Arguments:
 Options:
   --preset <name>        Preset to use (if omitted, shows interactive picker)
   --provider <name>      Provider name: local (default) or gitignore.io
-  --apply                Overwrite .gitignore directly (default: write .gitignore.preview)
   --overwrite-config     Overwrite an existing ignorekit.json
   --remove-cached        Remove Git-tracked files that should be ignored
   --yes                  Confirm removal without prompt (use with --remove-cached)
@@ -171,43 +167,15 @@ Options:
 If --preset is omitted, analyzes any existing .gitignore and suggests
 the best-matching preset interactively.
 
-By default, adopt writes a .gitignore.preview file so you can review before
-applying without changing .gitignore. Use --apply to overwrite .gitignore directly. --remove-cached also
-requires --apply, so Git always evaluates the generated rules.
+adopt writes directly to .gitignore. If a .gitignore already exists, a backup
+is saved as .gitignore.bak before overwriting. A preview of the result is shown
+in the console before any files are written. --remove-cached requires --apply
+as a safety guard.
 
 Examples:
   ignorekit adopt                           # interactive: analyze, pick preset
   ignorekit adopt --preset java-gradle      # use current directory with this preset
-  ignorekit adopt ./project --preset vite --apply
-`,
-    extract: `ignorekit extract - Extract a reusable component from .gitignore
-
-Usage:
-  ignorekit extract component <id> --from <path> [options]
-
-Arguments:
-  id          Component identifier (e.g. local/runtime)
-  --from      Path to the source .gitignore file (required)
-
-Options:
-  --full                  Extract entire .gitignore without analysis (legacy mode)
-  --output-root <path>    Output directory (default: ~/.ignorekit)
-  --dist-root <path>      Root directory for shipped definitions
-  --user-root <path>      User-level override directory
-  --workspace-root <path> Workspace-level definition directory
-
-By default, extracted components are written to ~/.ignorekit/components/ so they
-are available to all projects via the user definitions layer.
-Use --output-root .ignorekit to write to the project-local directory instead.
-
-By default, extract first analyzes the .gitignore against known components,
-then extracts only the unmatched (custom) rules as a new component.
-Use --full to skip analysis and extract the entire file.
-Run extract with no arguments for guided component creation and rule selection.
-
-Examples:
-  ignorekit extract component local/runtime --from ./my-project/.gitignore
-  ignorekit extract component local/custom --from ./.gitignore --full
+  ignorekit adopt ./project --preset vite
 `,
     create: `ignorekit create - Create reusable definitions
 
@@ -220,18 +188,33 @@ before writing the final file.
 
 Component options:
   --category <name>       Component category, for example local or framework
-  --from <path>           Read candidate rules from a .gitignore file
-  --rule <pattern>        Include one rule (repeatable)
+  --from <path>           Read rules from a .gitignore file (smart-analyzed)
+  --rule <pattern>        Include one rule (repeatable; explicit, no analysis)
   --output-root <path>    Definition root (default: ~/.ignorekit)
   --overwrite             Replace an existing component
+  --yes                   Skip the confirmation prompt before writing
+  --dist-root <path>      Root directory for shipped definitions (for analysis)
+  --user-root <path>      User-level override directory (for analysis)
+  --workspace-root <path> Workspace-level definition directory (for analysis)
+
+  When --from is used, the source .gitignore is analyzed against known
+  components and only the unmatched (custom) rules are extracted. Pass
+  --rule for literal rules (no analysis).
+
+  Before writing, a preview is shown and you are asked to confirm.
+  Use --yes to skip the prompt in scripts.
 
 Preset options:
   --base <name>           Base preset to extend
   --component <id>        Include a component (repeatable)
   --output-root <path>    Definition root (default: ~/.ignorekit)
+  --yes                   Skip the confirmation prompt before writing
+
+  Before writing, a preview is shown and you are asked to confirm.
 
 Examples:
   ignorekit create component runtime --category local --from ./.gitignore
+  ignorekit create component runtime --category local --from ./.gitignore --yes
   ignorekit create component docker --category deployment --rule docker-compose.override.yml
   ignorekit create preset team-vite --base vite --component local/runtime
 `,
@@ -276,28 +259,6 @@ what is covered and what is custom, and optionally suggests a preset.
 Examples:
   ignorekit analyze ./.gitignore
   ignorekit analyze ./.gitignore --suggest-preset
-`,
-    preset: `ignorekit preset - Create a new preset definition
-
-Usage:
-  ignorekit preset create <name> [options]
-
-Arguments:
-  name              Preset name (e.g. java-gradle-extended)
-
-Options:
-  --base <name>           Base preset to extend
-  --component <id>        Add a component (repeatable)
-  --output-root <path>    Output directory (default: ~/.ignorekit)
-
-By default, created presets are written to ~/.ignorekit/presets/ so they
-are available to all projects via the user definitions layer.
-Use --output-root .ignorekit to write to the project-local directory instead.
-Run preset with no arguments for guided base and component selection.
-
-Examples:
-  ignorekit preset create java-gradle-extended --base java-gradle --component local/runtime
-  ignorekit preset create full-stack --component language/java --component language/node
 `
   };
 
@@ -441,30 +402,46 @@ async function pickPresetInteractive(options, env) {
     return null;
   }
 
+  // Quick-access options: generic (safe default) and blank (no preset)
+  stdout.write('Quick options:\n');
+  stdout.write('  g. generic (safe default — platform, editor, secrets, logs)\n');
+  stdout.write('  b. blank (no components — build from scratch)\n');
+  stdout.write('\n');
+
   stdout.write('Available presets:\n');
   for (let i = 0; i < presetIds.length; i++) {
     const marker = presetIds[i] === suggestion ? ' ← suggested' : '';
     stdout.write(`  ${i + 1}. ${presetIds[i]}${marker}\n`);
   }
-  stdout.write(`  0. blank (no components — build from scratch)\n`);
   stdout.write('\n');
 
+  const defaultLabel = suggestion
+    ? `${suggestion}`
+    : (presetIds.includes('generic') ? 'generic' : `${presetIds[0]}`);
   // Read user input
-  const answer = await readLine(stdin, stdout, suggestion
-    ? `Pick a preset (1-${presetIds.length}, 0=blank) [${presetIds.indexOf(suggestion) + 1}]: `
-    : `Pick a preset (1-${presetIds.length}, 0=blank): `
+  const answer = await readLine(stdin, stdout,
+    `Pick a preset (name, number, or g/b) [${defaultLabel}]: `
   );
 
   if (answer.trim() === '') {
-    // Default to suggestion if available
+    // Default
     if (suggestion) return suggestion;
+    if (presetIds.includes('generic')) return 'generic';
+    if (presetIds.length > 0) return presetIds[0];
     stdout.write('No preset selected.\n');
     return null;
   }
 
-  const num = parseInt(answer.trim(), 10);
-  if (num === 0) return 'blank';
-  if (num >= 1 && num <= presetIds.length) return presetIds[num - 1];
+  const v = answer.trim().toLowerCase();
+  if (v === 'g' || v === 'generic') {
+    if (presetIds.includes('generic')) return 'generic';
+    stdout.write(`'generic' preset is not available.\n`);
+    return null;
+  }
+  if (v === 'b' || v === 'blank') return 'blank';
+
+  const num = parseInt(v, 10);
+  if (Number.isInteger(num) && num >= 1 && num <= presetIds.length) return presetIds[num - 1];
 
   // Try matching by name
   if (presetIds.includes(answer.trim())) return answer.trim();
@@ -518,9 +495,50 @@ async function runWithQuestions(env, operation) {
   }
 }
 
+/**
+ * Build the env passed to create workflows (component.js / preset.js).
+ * Adds a confirm() callback that prompts the user unless --yes is set or
+ * stdin is not a TTY (piped/test input).
+ */
+function buildCreateEnv(env, skipConfirm) {
+  const stdout = env.stdout || process.stdout;
+  const stdin = env.stdin || process.stdin;
+  const result = { stdout, cwd: env.cwd };
+
+  if (skipConfirm) return result;
+  if (env.confirm) { result.confirm = env.confirm; return result; }
+
+  // If test provided an ask function, use it for the confirm prompt
+  if (env.ask) {
+    result.confirm = async () => {
+      const answer = await Promise.resolve(env.ask('Proceed? [y/N/cancel] (N): '));
+      const v = String(answer || '').trim().toLowerCase();
+      if (v === 'y' || v === 'yes') return true;
+      if (v === 'cancel' || v === 'c') return false;
+      return false; // default N
+    };
+    return result;
+  }
+
+  // Check if stdin is a TTY — if not (piped/test), skip the prompt
+  const isTTY = stdin && typeof stdin.isTTY === 'boolean'
+    ? stdin.isTTY
+    : (typeof process !== 'undefined' && process.stdin && process.stdin.isTTY);
+  if (!isTTY) return result;
+
+  // Real TTY — prompt the user
+  result.confirm = () => new Promise((resolve) => {
+    const rl = readline.createInterface({ input: stdin, output: stdout });
+    rl.question('Proceed? [y/N/cancel] (N): ', (answer) => {
+      rl.close();
+      const v = String(answer || '').trim().toLowerCase();
+      resolve(v === 'y' || v === 'yes');
+    });
+  });
+  return result;
+}
+
 // --- Command dispatch ---
-// review #13 by-design: runCli uses a sequential if/else dispatch block.
-// Future refactor target: extract to a command registry pattern for extensibility.
 
 async function runCli(args, env = {}) {
   const stdout = env.stdout || process.stdout;
@@ -610,34 +628,31 @@ async function runCli(args, env = {}) {
       options.templates = collectRepeated(args.slice(1), '--template');
       options.components = collectRepeated(args.slice(1), '--component');
       options.exclude = collectRepeated(args.slice(1), '--exclude');
-      const result = await runAdoptWorkflow(options, { stdout, stderr, cwd: env.cwd });
+      const adoptEnv = { stdout, stderr, cwd: env.cwd };
+      // adopt also benefits from confirmation when stdin is a TTY
+      if (env.ask) {
+        adoptEnv.ask = env.ask;
+        adoptEnv.confirm = async () => {
+          const a = await Promise.resolve(env.ask('Proceed? [y/N/cancel] (N): '));
+          const v = String(a || '').trim().toLowerCase();
+          return v === 'y' || v === 'yes';
+        };
+      } else if (env.stdin && env.stdin.isTTY) {
+        adoptEnv.confirm = () => new Promise((resolve) => {
+          const rl = readline.createInterface({ input: env.stdin, output: stdout });
+          rl.question('Proceed? [y/N/cancel] (N): ', (answer) => {
+            rl.close();
+            const v = String(answer || '').trim().toLowerCase();
+            resolve(v === 'y' || v === 'yes');
+          });
+        });
+      }
+      const result = await runAdoptWorkflow(options, adoptEnv);
+      if (result.configPath === null) {
+        // user cancelled
+        return { exitCode: 1 };
+      }
       stdout.write(`Adopted ignorekit project at ${result.projectPath}\n`);
-      return { exitCode: 0 };
-    }
-
-    // Extract
-    if (command === 'extract') {
-      const subcommand = args[1];
-      if (subcommand !== 'component') {
-        if (!subcommand || subcommand.startsWith('--')) {
-          let options = parseArgs(args.slice(1));
-          const draft = await runWithQuestions(env, ask => promptComponentCreation(options, {
-            cwd: env.cwd || process.cwd(), stdout, ask
-          }));
-          if (!draft) return { exitCode: 1 };
-          options = { ...options, ...draft };
-          const result = runComponentCreate(options, { cwd: env.cwd });
-          stdout.write(`Created component ${result.id} at ${result.outputPath}\n`);
-          return { exitCode: 0 };
-        }
-        throw new Error('extract supports only: component');
-      }
-      const options = parseArgs(args.slice(2));
-      options.id = options._[0];
-      const result = runExtractComponent(options, { stdout, stderr, cwd: env.cwd });
-      if (result.outputPath) {
-        stdout.write(`Created component ${result.outputPath}\n`);
-      }
       return { exitCode: 0 };
     }
 
@@ -645,6 +660,7 @@ async function runCli(args, env = {}) {
     if (command === 'create') {
       const subcommand = args[1];
       let options = parseArgs(args.slice(2));
+      const createEnv = buildCreateEnv(env, options.yes);
       if (subcommand === 'component') {
         options.name = options._[0];
         options.rules = collectRepeated(args.slice(2), '--rule');
@@ -655,9 +671,8 @@ async function runCli(args, env = {}) {
           if (!draft) return { exitCode: 1 };
           options = { ...options, ...draft };
         }
-        const result = runComponentCreate(options, { cwd: env.cwd });
-        stdout.write(`Created component ${result.id} at ${result.outputPath}\n`);
-        return { exitCode: 0 };
+        const result = await runComponentCreate(options, createEnv);
+        return { exitCode: result.outputPath ? 0 : 1 };
       }
       if (subcommand === 'preset') {
         options.name = options._[0];
@@ -669,36 +684,10 @@ async function runCli(args, env = {}) {
           if (!draft) return { exitCode: 1 };
           options = { ...options, ...draft };
         }
-        const result = runPresetCreate(options, { cwd: env.cwd });
-        stdout.write(`Created preset ${result.outputPath}\n`);
-        return { exitCode: 0 };
+        const result = await runPresetCreate(options, createEnv);
+        return { exitCode: result.outputPath ? 0 : 1 };
       }
       throw new Error('create supports: component, preset');
-    }
-
-    // Preset
-    if (command === 'preset') {
-      const subcommand = args[1];
-      if (subcommand !== 'create') {
-        if (!subcommand || subcommand.startsWith('--')) {
-          let options = parseArgs(args.slice(1));
-          const draft = await runWithQuestions(env, ask => promptPresetCreation(options, {
-            cwd: env.cwd || process.cwd(), stdout, ask
-          }));
-          if (!draft) return { exitCode: 1 };
-          options = { ...options, ...draft };
-          const result = runPresetCreate(options, { cwd: env.cwd });
-          stdout.write(`Created preset ${result.outputPath}\n`);
-          return { exitCode: 0 };
-        }
-        throw new Error('preset supports only: create');
-      }
-      const options = parseArgs(args.slice(2));
-      options.name = options._[0];
-      options.components = collectRepeated(args.slice(2), '--component');
-      const result = runPresetCreate(options, { cwd: env.cwd });
-      stdout.write(`Created preset ${result.outputPath}\n`);
-      return { exitCode: 0 };
     }
 
     throw new Error(`Unknown command: ${command}`);

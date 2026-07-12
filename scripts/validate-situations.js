@@ -11,7 +11,7 @@ const presetsDir = path.join(repoRoot, 'presets');
 
 const { listDefinitions: listDefinitionsArray } = require('../src/core/fs');
 
-const workflows = new Set(['init', 'adopt', 'generate', 'extract', 'preset-create']);
+const workflows = new Set(['init', 'adopt', 'generate']);
 const addonTypes = new Set(['ensureDirectory', 'ensureGitRepo', 'removeCachedIgnoredFiles']);
 const providerNames = new Set(['local', 'gitignore.io']);
 
@@ -22,13 +22,11 @@ function main() {
   const situations = readSituations(errors);
   const shippedComponents = listDefinitions(componentsDir, '.gitignore');
   const shippedPresets = listDefinitions(presetsDir, '.json');
-  const produced = collectProducedDefinitions(situations);
 
   for (const situation of situations) {
     validateSituation(situation, {
       shippedComponents,
       shippedPresets,
-      produced,
       errors
     });
   }
@@ -75,31 +73,6 @@ function readSituations(errors) {
     });
 }
 
-function collectProducedDefinitions(situations) {
-  const produced = {
-    components: new Set(),
-    presets: new Set()
-  };
-
-  for (const situation of situations) {
-    const data = situation.data;
-
-    if (data.extract?.output?.kind === 'component' && data.extract.output.id) {
-      produced.components.add(data.extract.output.id);
-    }
-
-    if (data.extract?.output?.kind === 'preset' && data.extract.output.id) {
-      produced.presets.add(data.extract.output.id);
-    }
-
-    if (data.presetDefinition?.name) {
-      produced.presets.add(data.presetDefinition.name);
-    }
-  }
-
-  return produced;
-}
-
 function validateSituation(situation, context) {
   const { data, file } = situation;
   const errors = context.errors;
@@ -120,15 +93,13 @@ function validateSituation(situation, context) {
 
   if (typeof data.command !== 'string' || data.command.length === 0) {
     errors.push(`${label}: command is required`);
-  } else if (!data.command.includes(data.workflow === 'preset-create' ? 'preset create' : data.workflow)) {
+  } else if (!data.command.includes(data.workflow)) {
     errors.push(`${label}: command should include the workflow name`);
   }
 
   validateConfig(data, label, context);
   validateGeneration(data, label, errors);
   validateAddons(data, label, errors);
-  validateExtract(data, label, context);
-  validatePresetDefinition(data, label, context);
   validateExpected(data, label, errors);
 }
 
@@ -199,10 +170,6 @@ function validateAddons(data, label, errors) {
     errors.push(`${label}: generate must not define addons`);
   }
 
-  if (data.workflow === 'extract' && data.addons.length > 0) {
-    errors.push(`${label}: extract must not define workflow addons`);
-  }
-
   for (const addon of data.addons) {
     if (!addonTypes.has(addon.type)) {
       errors.push(`${label}: unknown addon type '${addon.type}'`);
@@ -215,52 +182,6 @@ function validateAddons(data, label, errors) {
 
     if (addon.type === 'removeCachedIgnoredFiles' && data.workflow !== 'adopt') {
       errors.push(`${label}: removeCachedIgnoredFiles only applies to adopt`);
-    }
-  }
-}
-
-function validateExtract(data, label, context) {
-  if (data.workflow !== 'extract') {
-    return;
-  }
-
-  if (!data.extract?.source) {
-    context.errors.push(`${label}: extract.source is required`);
-  }
-
-  if (!data.extract?.output?.kind || !['component', 'preset'].includes(data.extract.output.kind)) {
-    context.errors.push(`${label}: extract.output.kind must be component or preset`);
-  }
-
-  if (!data.extract?.output?.id) {
-    context.errors.push(`${label}: extract.output.id is required`);
-  }
-}
-
-function validatePresetDefinition(data, label, context) {
-  if (data.workflow !== 'preset-create') {
-    return;
-  }
-
-  const definition = data.presetDefinition;
-  if (!definition) {
-    context.errors.push(`${label}: presetDefinition is required`);
-    return;
-  }
-
-  if (!definition.name) {
-    context.errors.push(`${label}: presetDefinition.name is required`);
-  }
-
-  if (definition.base) {
-    assertPreset(definition.base, `${label}: presetDefinition.base`, context);
-  }
-
-  if (!Array.isArray(definition.components)) {
-    context.errors.push(`${label}: presetDefinition.components must be an array`);
-  } else {
-    for (const component of definition.components) {
-      assertComponent(component, `${label}: presetDefinition.components`, context, data);
     }
   }
 }
@@ -279,14 +200,14 @@ function validateExpected(data, label, errors) {
 }
 
 function assertPreset(preset, location, context) {
-  if (context.shippedPresets.has(preset) || context.produced.presets.has(preset)) {
+  if (context.shippedPresets.has(preset)) {
     return;
   }
   context.errors.push(`${location} references unknown preset '${preset}'`);
 }
 
 function assertComponent(component, location, context, data) {
-  if (context.shippedComponents.has(component) || context.produced.components.has(component)) {
+  if (context.shippedComponents.has(component)) {
     return;
   }
 
@@ -348,4 +269,3 @@ function validateShippedPresets(shippedPresets, shippedComponents, errors) {
 function listDefinitions(directory, extension) {
   return new Set(listDefinitionsArray(directory, extension));
 }
-

@@ -5,6 +5,55 @@ const path = require('path');
 const { listDefinitions } = require('../core/fs');
 const { assertDefinitionId, resolveInside, USER_ROOT } = require('../core/path');
 
+/**
+ * Compute a simple edit-distance score between two strings.
+ * Returns the number of single-character edits (insert/delete/substitute)
+ * needed to transform a into b. Used for "did you mean?" suggestions.
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+function editDistance(a, b) {
+  const m = a.length;
+  const n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => i);
+  for (let j = 1; j <= n; j++) {
+    let prev = dp[0];
+    dp[0] = j;
+    for (let i = 1; i <= m; i++) {
+      const temp = dp[i];
+      dp[i] = a[i - 1] === b[j - 1]
+        ? prev
+        : 1 + Math.min(prev, dp[i], dp[i - 1]);
+      prev = temp;
+    }
+  }
+  return dp[m];
+}
+
+/**
+ * Find the closest match for an unknown ID among known candidates.
+ * Returns the best candidate if within a reasonable edit-distance threshold,
+ * or null if nothing is close enough.
+ * @param {string} id - The unknown ID the user provided
+ * @param {string[]} candidates - Known valid IDs
+ * @returns {string|null}
+ */
+function suggestSimilar(id, candidates) {
+  if (candidates.length === 0) return null;
+  const threshold = Math.max(2, Math.floor(id.length / 2));
+  let best = null;
+  let bestDist = Infinity;
+  for (const candidate of candidates) {
+    const dist = editDistance(id, candidate);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = candidate;
+    }
+  }
+  return bestDist <= threshold ? best : null;
+}
+
 function createDefinitionResolver(options = {}) {
   const layers = [
     options.distRoot,
@@ -22,7 +71,16 @@ function createDefinitionResolver(options = {}) {
         return { filePath, content };
       } catch { continue; }
     }
-    throw new Error(`Unknown ${kind.slice(0, -1)}: ${id}`);
+    const singular = kind.slice(0, -1);
+    const knownIds = listDefinitionIds(kind, extension);
+    const suggestion = suggestSimilar(id, knownIds);
+    let message = `Unknown ${singular}: ${id}`;
+    if (suggestion) {
+      message += `. Did you mean '${suggestion}'?`;
+    } else if (knownIds.length > 0) {
+      message += `. Available: ${knownIds.slice(0, 5).join(', ')}${knownIds.length > 5 ? `, ... (${knownIds.length} total)` : ''}`;
+    }
+    throw new Error(message);
   }
 
   function listDefinitionIds(kind, extension) {

@@ -66,19 +66,26 @@ ignorekit init ./web-app --preset vite --no-git
 ignorekit init ./my-app --preset node --exclude platform/windows
 ```
 
-If `--preset` is omitted, an interactive picker shows all presets with the best match suggested.
+If `--preset` is omitted, an interactive picker shows all presets with the best
+match suggested. The picker also offers two quick options: `generic` (safe
+default for any project) and `blank` (no components). When there's no suggestion
+from analysis, pressing Enter selects `generic`.
 
 ### `adopt` — Bring an existing project into ignorekit
 
 ```bash
-ignorekit adopt                                   # interactive: analyze, pick preset, preview
+ignorekit adopt                                   # interactive: analyze, pick preset
 ignorekit adopt --preset java-gradle              # use current directory
-ignorekit adopt --preset java-gradle --apply      # overwrite .gitignore directly
 ignorekit adopt --preset node --exclude platform/windows
 ignorekit adopt --preset java-gradle --component language/node  # mixed project
+ignorekit adopt --preset java-gradle --remove-cached --apply  # also untrack ignored files
 ```
 
-Adopt analyzes your existing `.gitignore`, shows strong component matches, carries over only rules not covered by your chosen preset or extra components, and generates a `.gitignore.preview` for review without changing the current `.gitignore`. Use repeatable `--component <id>` options for mixed projects; the selected components are saved in `ignorekit.json`.
+Adopt analyzes your existing `.gitignore`, shows strong component matches, carries over only rules not covered by your chosen preset or extra components, and **writes directly to `.gitignore`**. A preview of the result is shown in the console before any files are written.
+
+If a `.gitignore` already exists, a backup is saved as `.gitignore.bak` before overwriting. Use repeatable `--component <id>` options for mixed projects; the selected components are saved in `ignorekit.json`.
+
+`--remove-cached` requires `--apply` as a safety guard (it deletes files from the Git index, so you must confirm).
 
 ### `generate` — Build .gitignore from config
 
@@ -110,10 +117,11 @@ Matches lines against known components, shows coverage, identifies custom rules,
 ### `create` — Create reusable definitions
 
 ```bash
-ignorekit create component                             # guided rule selection and review
+ignorekit create component                                       # guided rule selection and review
 ignorekit create component runtime --category local --from ./.gitignore
 ignorekit create component docker --category deployment --rule docker-compose.override.yml
-ignorekit create preset                                # guided base and component selection
+ignorekit create component runtime --category local --rule foo --rule bar   # literal rules
+ignorekit create preset                                          # guided base and component selection
 ignorekit create preset team-vite --base vite --component local/runtime
 ```
 
@@ -122,25 +130,32 @@ is stored as `components/local/runtime.gitignore`. Guided creation lists every
 candidate rule or component, lets you choose a subset, then shows the final
 output path before it writes anything.
 
-### `extract` — Create a reusable component
+**Smart extraction** is automatic when `--from <path>` is used: the source
+.gitignore is analyzed against known components and only the *unmatched* (custom)
+rules are extracted. To write literal rules, pass `--rule <pattern>` instead
+(skipping analysis). This is useful for extracting project-specific rules from
+an existing `.gitignore` while skipping rules already covered by known components.
 
-```bash
-ignorekit extract component local/custom --from ./.gitignore    # smart: only unmatched lines
-ignorekit extract component local/runtime --from ./.gitignore --full  # entire file
+**Interactive rule selection** (no `--rule`): when a source is provided
+interactively, you see every rule with `[x]` / `[ ]` markers (covered rules
+pre-deselected), and you can toggle individual rules:
+
+```
+Rules (5, 3 selected):
+  [ ] 1. .idea/         (covered by editor/jetbrains)
+  [ ] 2. *.iml          (covered by editor/jetbrains)
+  [x] 3. cache/
+  [x] 4. secret.key
+  [x] 5. MIGRATION.md
+Toggle rules (e.g. 3, 1-3, all, none) [done]: 
 ```
 
-`extract` remains a compatibility command for smart unmatched-rule extraction.
-Run `ignorekit extract` with no arguments to use the same guided component
-creation flow as `ignorekit create component`.
+Type a number to toggle, `1-3` to toggle a range, `all` / `none`, or `done` to
+confirm.
 
-### `preset` — Create a preset definition
-
-```bash
-ignorekit preset create my-stack --component language/java --component language/node
-ignorekit preset create java-extended --base java-gradle --component local/custom
-```
-
-`ignorekit preset` with no arguments opens the guided preset creation flow.
+**Confirmation prompt**: before writing any file, both `create component` and
+`create preset` show a preview and ask `Proceed? [y/N/cancel]`. Pass `--yes` to
+skip the prompt in scripts.
 
 ## Project config
 
@@ -167,7 +182,7 @@ Projects use `ignorekit.json`:
 
 ## Reusable definitions
 
-`ignorekit extract` and `ignorekit preset create` save reusable definitions to
+`ignorekit create component` and `ignorekit create preset` save reusable definitions to
 `~/.ignorekit` by default. They are picked up automatically by every command,
 so a new `local/runtime` component or `team-stack` preset can be used straight
 away without extra flags.
