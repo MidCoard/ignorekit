@@ -170,3 +170,34 @@ test('init checks nested Git state before creating managed files', async () => {
     workspace.cleanup();
   }
 });
+
+// --- #2 (Round 1): init should collect repeated --component flags ---
+
+test('init --component forwards repeated components into ignorekit.json', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeText('dist/components/language/node.gitignore', 'node_modules/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+
+    const result = await runCli([
+      'init', workspace.path('project'), '--preset', 'demo',
+      '--component', 'language/node',
+      '--no-git',
+      '--dist-root', workspace.path('dist'),
+      '--yes'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    const configPath = workspace.path('project/ignorekit.json');
+    const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    assert.ok(cfg.components.includes('language/node'),
+      `expected components to include language/node, got: ${JSON.stringify(cfg.components)}`);
+  } finally {
+    workspace.cleanup();
+  }
+});

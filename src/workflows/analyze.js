@@ -9,6 +9,7 @@ const { buildResolver } = require('../cli/resolver-factory');
 const { DIST_ROOT } = require('../core/path');
 const { detectProjectSignals } = require('../detection/project-signals');
 const { formatMatchedComponentsTable } = require('./_format');
+const { debugError } = require('../core/debug');
 
 /**
  * Normalize a gitignore pattern for matching purposes.
@@ -148,7 +149,7 @@ function scorePreset(presetComponents, componentResults, totalInputLines = 0) {
  * @param {string} options.distRoot - Dist root for definitions
  * @param {string} [options.userRoot] - User-level override directory
  * @param {string} [options.workspaceRoot] - Workspace-level definition directory
- * @returns {{ totalLines: number, matchedComponents: object[], unmatchedLines: string[], componentResults: Map, bestPreset: object|null, allPresets: object[] }}
+ * @returns {{ totalLines: number, matchedComponents: object[], unmatchedLines: string[], componentResults: Map, bestPreset: object|null, allPresets: object[], originalLines?: string[] }}
  */
 function analyzeGitignore(options) {
   const gitignorePath = path.resolve(options.gitignorePath);
@@ -161,7 +162,11 @@ function analyzeGitignore(options) {
     throw new Error(`.gitignore is too large to analyze (${stat.size} bytes, limit ${MAX_GITIGNORE_BYTES})`);
   }
   const rawContent = fs.readFileSync(gitignorePath, 'utf8');
+  // Analyze uses the trimmed form for matching; originalLines preserves the
+  // user's actual byte text so callers (adopt) can carry forward rules with
+  // their original whitespace and quoting intact.
   const inputLines = parseSignificantLines(rawContent);
+  const originalLines = options.keepRawLines ? parseSignificantLines(rawContent, { keepRaw: true }).map(p => p.original) : null;
   const totalInputLines = inputLines.length;
 
   const distRoot = options.distRoot || DIST_ROOT;
@@ -181,7 +186,8 @@ function analyzeGitignore(options) {
       if (result.matched.length > 0) {
         componentResults.set(id, result);
       }
-    } catch {
+    } catch (err) {
+      debugError(err, 'analyze.readComponent');
       // Skip components that can't be read
     }
   }
@@ -246,12 +252,14 @@ function analyzeGitignore(options) {
           components: presetComponents,
           evidence: signal ? [signal.evidence] : []
         });
-      } catch {
+      } catch (err) {
+        debugError(err, 'analyze.preset-base');
         // Skip presets with broken base chains
       }
     }
     allPresets.sort((a, b) => b.score - a.score);
-  } catch {
+  } catch (err) {
+    debugError(err, 'analyze.presets-dir');
     // No presets directory
   }
 
@@ -266,7 +274,8 @@ function analyzeGitignore(options) {
     displayedUnmatchedLines,
     componentResults,
     bestPreset,
-    allPresets
+    allPresets,
+    ...(originalLines ? { originalLines } : {})
   };
 }
 

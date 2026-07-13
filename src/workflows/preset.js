@@ -23,10 +23,18 @@ const { assertDefinitionId, resolveInside, USER_ROOT } = require('../core/path')
  */
 async function runPresetCreate(options, env) {
   const stdout = env.stdout || process.stdout;
+  const stderr = env.stderr || process.stderr;
   assertDefinitionId(options.name);
   const outputRoot = options.outputRoot
     ? path.resolve(env.cwd || process.cwd(), options.outputRoot)
     : USER_ROOT;
+  // --user-root is a discovery source only. Without --output-root, the preset
+  // is written to the personal definitions layer (~/.ignorekit) regardless of
+  // what --user-root points at, so callers always know where to find it.
+  if (options.userRoot && !options.outputRoot) {
+    stderr.write(`Note: --user-root is a discovery source. Without --output-root, the file is written to ${USER_ROOT} (the default user definitions layer).\n`);
+    stderr.write(`      Pass --output-root to write somewhere else.\n`);
+  }
   const outputPath = resolveInside(outputRoot, path.join('presets', `${options.name}.json`));
   const components = Array.isArray(options.components) ? options.components : [];
   const preset = {

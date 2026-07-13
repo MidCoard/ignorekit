@@ -5,7 +5,7 @@ const childProcess = require('child_process');
 const fs = require('fs');
 const test = require('node:test');
 const path = require('path');
-const { runCli } = require('../src/cli');
+const { runCli, parseArgs } = require('../src/cli');
 const { createTempWorkspace } = require('./helpers/temp-workspace');
 
 function createListFixture() {
@@ -221,5 +221,180 @@ module.exports = { runCli };
     assert.equal(result.stderr, 'ignorekit: boom\n');
   } finally {
     workspace.cleanup();
+  }
+});
+
+// --- parseArgs --key=value syntax ---
+
+test('parseArgs supports --key=value syntax for value options', () => {
+  const options = parseArgs(['--preset=vite', '--output-root=somewhere']);
+  assert.equal(options.preset, 'vite');
+  assert.equal(options.outputRoot, 'somewhere');
+});
+
+test('parseArgs supports mixed --key value and --key=value forms', () => {
+  const options = parseArgs(['--preset', 'java', '--dist-root=here']);
+  assert.equal(options.preset, 'java');
+  assert.equal(options.distRoot, 'here');
+});
+
+test('parseArgs still recognises space-separated values', () => {
+  const options = parseArgs(['--preset', 'vite']);
+  assert.equal(options.preset, 'vite');
+});
+
+// --- pickPresetInteractive default fallback (no suggestion, no generic) ---
+
+test('pickPresetInteractive does not silently default to alphabet[0] when no suggestion or generic', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    // Two presets: 'apple' and 'banana'. No 'generic' preset exists. alphabet[0]
+    // would be 'apple', but the picker should NOT silently pick it; an empty
+    // answer with no safe default must surface that to the caller.
+    workspace.writeJson('dist/presets/apple.json', { name: 'apple', components: [] });
+    workspace.writeJson('dist/presets/banana.json', { name: 'banana', components: [] });
+
+    const { pickPresetInteractive } = require('../src/cli');
+    const result = await pickPresetInteractive(
+      { distRoot: workspace.path('dist') },
+      {
+        stdout: { write: () => {} },
+        stdin: { isTTY: true },
+        ask: async () => ''
+      }
+    );
+
+    assert.equal(result, null,
+      `expected null when no safe default exists and user entered empty, got ${result}`);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('pickPresetInteractive returns null when no default exists and user enters empty twice', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeJson('dist/presets/alpha.json', { name: 'alpha', components: [] });
+    workspace.writeJson('dist/presets/zeta.json', { name: 'zeta', components: [] });
+
+    const { pickPresetInteractive } = require('../src/cli');
+    const result = await pickPresetInteractive(
+      { distRoot: workspace.path('dist') },
+      {
+        stdout: { write: () => {} },
+        stdin: { isTTY: true },
+        ask: async () => ''
+      }
+    );
+
+    assert.equal(result, null,
+      `expected null when no safe default exists and user declined to pick, got ${result}`);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- runWithQuestions: piped input must not drop lines ---
+
+test('runWithQuestions delivers every queued line to a sequential ask() call', async () => {
+  const { runWithQuestions } = require('../src/cli');
+  // Fake stdin with the three queued lines already buffered. readline would
+  // emit 'line' for each, which the queueing helper must preserve even when
+  // ask() is called sequentially (the original code dropped lines under load).
+  const { PassThrough } = require('stream');
+  const stdin = new PassThrough();
+  stdin.isTTY = false;
+  setImmediate(() => {
+    stdin.write('first\n');
+    stdin.write('second\n');
+    stdin.write('third\n');
+    stdin.end();
+  });
+  const answers = [];
+  const result = await runWithQuestions(
+    { stdin, stdout: { write: () => {} } },
+    async ask => {
+      answers.push(await ask('1: '));
+      answers.push(await ask('2: '));
+      answers.push(await ask('3: '));
+      return answers.join('|');
+    }
+  );
+  assert.deepEqual(answers, ['first', 'second', 'third'],
+    `expected 3 sequential answers, got ${JSON.stringify(answers)}`);
+  assert.equal(result, 'first|second|third');
+});
+
+test('runWithQuestions drains all piped lines before each ask() resolves', async () => {
+  const { runWithQuestions } = require('../src/cli');
+  // Five lines queued; the bug under fix #6 caused lines past the third ask
+  // to be silently dropped when stdin was piped without env.ask. Drive ask()
+  // four times and confirm we get four distinct values from the queue, with
+  // an empty string as the deferred answer when the queue runs out.
+  const { PassThrough } = require('stream');
+  const stdin = new PassThrough();
+  stdin.isTTY = false;
+  const linesWritten = ['alpha', 'beta', 'gamma', 'delta', 'epsilon'];
+  setImmediate(() => {
+    for (const line of linesWritten) stdin.write(`${line}\n`);
+    stdin.end();
+  });
+  const answers = [];
+  await runWithQuestions(
+    { stdin, stdout: { write: () => {} } },
+    async ask => {
+      answers.push(await ask('1: '));
+      answers.push(await ask('2: '));
+      answers.push(await ask('3: '));
+      answers.push(await ask('4: '));
+      answers.push(await ask('5: '));
+    }
+  );
+  assert.deepEqual(answers, linesWritten,
+    `expected all 5 piped lines to be delivered in order, got ${JSON.stringify(answers)}`);
+});
+
+// --- #8 (Adv): CI/IGNOREKIT_NONINTERACTIVE env must skip confirmation ---
+
+test('createConfirm returns null under CI even when stdin reports TTY', async () => {
+  const { createConfirm } = require('../src/cli/prompt');
+  const prev = {
+    ci: process.env.CI,
+    noninteractive: process.env.IGNOREKIT_NONINTERACTIVE
+  };
+  process.env.CI = '1';
+  delete process.env.IGNOREKIT_NONINTERACTIVE;
+  try {
+    // Pass a fake "TTY" stdin — without the env guard, the confirm prompt
+    // would try to readline on it and hang or read garbage.
+    const fakeStdin = { isTTY: true, on: () => {}, setEncoding: () => {} };
+    const confirm = createConfirm({
+      stdout: { write: () => {} },
+      stdin: fakeStdin
+    });
+    assert.equal(confirm, null,
+      'expected createConfirm to bail out under CI without env.ask');
+  } finally {
+    if (prev.ci === undefined) delete process.env.CI; else process.env.CI = prev.ci;
+    if (prev.noninteractive === undefined) delete process.env.IGNOREKIT_NONINTERACTIVE;
+    else process.env.IGNOREKIT_NONINTERACTIVE = prev.noninteractive;
+  }
+});
+
+test('createConfirm returns null under IGNOREKIT_NONINTERACTIVE', async () => {
+  const { createConfirm } = require('../src/cli/prompt');
+  const prev = process.env.IGNOREKIT_NONINTERACTIVE;
+  process.env.IGNOREKIT_NONINTERACTIVE = '1';
+  try {
+    const fakeStdin = { isTTY: true };
+    const confirm = createConfirm({
+      stdout: { write: () => {} },
+      stdin: fakeStdin
+    });
+    assert.equal(confirm, null,
+      'expected createConfirm to bail out under IGNOREKIT_NONINTERACTIVE');
+  } finally {
+    if (prev === undefined) delete process.env.IGNOREKIT_NONINTERACTIVE;
+    else process.env.IGNOREKIT_NONINTERACTIVE = prev;
   }
 });

@@ -11,6 +11,7 @@ const { generateGitignore } = require('../generator');
 const { listTrackedIgnoredFiles, removeCachedFiles } = require('../git');
 const { analyzeGitignore } = require('./analyze');
 const { formatMatchedComponentsTable } = require('./_format');
+const { debugError } = require('../core/debug');
 
 /**
  * Run the adopt workflow.
@@ -58,7 +59,11 @@ async function runAdoptWorkflow(options, env) {
       gitignorePath: existingGitignorePath,
       distRoot,
       userRoot: options.userRoot,
-      workspaceRoot: options.workspaceRoot
+      workspaceRoot: options.workspaceRoot,
+      // Ask analyzeGitignore to preserve the source byte text of each rule so
+      // custom-rule carry-forward below keeps the user's original line exactly
+      // (including trailing whitespace and quoting).
+      keepRawLines: true
     });
 
     stdout.write('Analyzing existing .gitignore...\n\n');
@@ -120,7 +125,8 @@ async function runAdoptWorkflow(options, env) {
         warnings.push(suggestion);
         stdout.write(`💡 ${suggestion}\n\n`);
       }
-    } catch {
+    } catch (err) {
+      debugError(err, 'adopt.preset');
       // Preset not found — will error below when config is built
     }
   }
@@ -135,7 +141,8 @@ async function runAdoptWorkflow(options, env) {
       for (const id of resolvePresetComponents(resolver, options.preset)) {
         selectedComponentIds.add(id);
       }
-    } catch {
+    } catch (err) {
+      debugError(err, 'adopt.preset-components');
       // The generator reports invalid presets with its usual error message.
     }
     const coveredRules = new Set();
@@ -146,11 +153,14 @@ async function runAdoptWorkflow(options, env) {
       }
     }
 
-    // Deduplicate (some .gitignore files have the same rule twice). Reuse the
-    // lines the analysis already parsed instead of re-reading the file.
+    // Deduplicate (some .gitignore files have the same rule twice). Prefer the
+    // original byte text — `originalLines` preserves trailing whitespace and
+    // quoting; `inputLines` is the normalized form used for matching. When
+    // analysis was run without keepRawLines, fall back to inputLines so older
+    // callers still produce byte-identical output to before.
     const seen = new Set();
     const customRules = [];
-    const existingRules = analysis.inputLines;
+    const existingRules = analysis.originalLines || analysis.inputLines;
     for (const line of existingRules) {
       if (!coveredRules.has(line) && !seen.has(line)) {
         seen.add(line);

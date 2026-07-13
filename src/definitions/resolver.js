@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { listDefinitions } = require('../core/fs');
 const { assertDefinitionId, resolveInside } = require('../core/path');
+const { debugError } = require('../core/debug');
 
 /**
  * Compute a simple edit-distance score between two strings.
@@ -73,7 +74,13 @@ function createDefinitionResolver(options = {}) {
         const filePath = resolveInside(root, path.join(kind, `${id}${extension}`));
         const content = fs.readFileSync(filePath, 'utf8');
         return { filePath, content };
-      } catch { continue; }
+      } catch (err) {
+        // Layer is optional; missing files are expected. DEBUG-LOG: surface
+        // the file path under IGNOREKIT_DEBUG so a misconfigured root is
+        // visible without changing the lookup contract.
+        debugError(err, `resolver.read.${kind}`);
+        continue;
+      }
     }
     const singular = kind.slice(0, -1);
     const knownIds = listDefinitionIds(kind, extension);

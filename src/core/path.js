@@ -11,7 +11,9 @@ const DIST_ROOT = path.resolve(__dirname, '..', '..');
 const USER_ROOT = path.join(os.homedir(), '.ignorekit');
 
 function assertDefinitionId(id) {
-  if (!definitionIdPattern.test(id) || id.includes('..')) {
+  // Reject ids beginning with a dot so callers cannot define a component whose
+  // name collides with hidden system directories (e.g. ".git", ".idea").
+  if (!definitionIdPattern.test(id) || id.includes('..') || id.startsWith('.')) {
     throw new Error(`Invalid definition id: ${id}`);
   }
 }

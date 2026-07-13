@@ -16,6 +16,7 @@ const { runPresetCreate } = require('./workflows/preset');
 const { promptComponentCreation, promptPresetCreation } = require('./interactive/create');
 const { runExplainWorkflow } = require('./workflows/explain');
 const { runAnalyzeWorkflow, analyzeGitignore } = require('./workflows/analyze');
+const { debugError } = require('./core/debug');
 
 // --- Argument parsing ---
 
@@ -33,9 +34,22 @@ function parseArgs(args) {
       options._.push(arg);
       continue;
     }
-    const key = arg.slice(2).replace(/-([a-z])/g, (_, char) => char.toUpperCase());
+    // `--key=value` is shorthand for `--key value`. Most CLIs accept both, and
+    // shell users frequently copy the equals form from documentation.
+    let inlineValue = null;
+    let body = arg.slice(2);
+    const eq = body.indexOf('=');
+    if (eq >= 0) {
+      inlineValue = body.slice(eq + 1);
+      body = body.slice(0, eq);
+    }
+    const key = body.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
     if (BOOLEAN_OPTIONS.has(key)) {
       options[key] = true;
+      continue;
+    }
+    if (inlineValue !== null) {
+      options[key] = inlineValue;
       continue;
     }
     const value = args[index + 1];
@@ -301,7 +315,8 @@ function commandList(args, env) {
         } else {
           stdout.write(`  ${preset}\n`);
         }
-      } catch {
+      } catch (err) {
+        debugError(err, 'list.preset-chain');
         stdout.write(`  ${preset}\n`);
       }
     }
@@ -375,8 +390,14 @@ async function pickPresetInteractive(options, env) {
         const matchInfo = `${analysis.bestPreset.fullCount} of ${analysis.bestPreset.componentCount} components matched`;
         stdout.write(`💡 Best match: ${suggestion} (${matchInfo})\n\n`);
       }
-    } catch {
-      // Analysis failed — fall through to manual selection
+    } catch (err) {
+      // Surface the failure rather than silently falling back. Most common
+      // cause is a .gitignore > 1 MiB (refused by analyzeGitignore), which
+      // otherwise looks like "no suggestion available" and confuses users.
+      const stderr = env.stderr || process.stderr;
+      stderr.write(`Could not analyze .gitignore: ${err.message}\n`);
+      stderr.write(`Picking from the full preset list instead.\n`);
+      debugError(err, 'preset-picker.analyze');
     }
   }
 
@@ -401,9 +422,13 @@ async function pickPresetInteractive(options, env) {
   }
   stdout.write('\n');
 
-  const defaultLabel = suggestion
-    ? `${suggestion}`
-    : (presetIds.includes('generic') ? 'generic' : `${presetIds[0]}`);
+  // Determine the safe default. Using `presetIds[0]` as a fallback is unsafe —
+  // it just picks whatever happens to be alphabetically first (often 'blank'
+  // or 'angular' depending on what's been added at the user layer). When there
+  // is no suggestion and no 'generic' preset available, refuse to default and
+  // require the user to pick explicitly.
+  const safeDefault = suggestion || (presetIds.includes('generic') ? 'generic' : null);
+  const defaultLabel = safeDefault || '(choose one)';
   // Read user input. Route through runWithQuestions so prompt reading uses a
   // single readline lifecycle shared with the create flow.
   const answer = await runWithQuestions(
@@ -412,11 +437,8 @@ async function pickPresetInteractive(options, env) {
   );
 
   if (answer.trim() === '') {
-    // Default
-    if (suggestion) return suggestion;
-    if (presetIds.includes('generic')) return 'generic';
-    if (presetIds.length > 0) return presetIds[0];
-    stdout.write('No preset selected.\n');
+    if (safeDefault) return safeDefault;
+    stdout.write('No default preset available — pick one by name, number, or g/b.\n');
     return null;
   }
 
@@ -443,8 +465,31 @@ async function runWithQuestions(env, operation) {
     return operation(prompt => Promise.resolve(env.ask(prompt)));
   }
 
-  const rl = readline.createInterface({ input: env.stdin || process.stdin });
+  const stdin = env.stdin || process.stdin;
   const stdout = env.stdout || process.stdout;
+
+  // Piped (non-TTY) input: drain the entire stream into a buffer first so we
+  // can serve the buffered lines one-per-ask without racing readline's async
+  // delivery. Without this, line events can land in queuedLines out of order
+  // with pendingQuestions resolution and silently drop the lines that arrive
+  // after ask() is called but before the next event loop tick.
+  if (!stdin || stdin.isTTY === false || stdin.isTTY === undefined) {
+    const lines = await readAllLines(stdin);
+    let cursor = 0;
+    function ask(prompt) {
+      stdout.write(prompt);
+      if (cursor < lines.length) return Promise.resolve(lines[cursor++]);
+      // Past the drained stream: blank answers. The operation decides what an
+      // empty response means in its own context (interpret as "no", or fall
+      // through to a default).
+      return Promise.resolve('');
+    }
+    return operation(ask);
+  }
+
+  // TTY: real readline interaction. Each ask() waits for one line; queued
+  // lines from input already buffered are served first.
+  const rl = readline.createInterface({ input: stdin, output: stdout });
   const queuedLines = [];
   const pendingQuestions = [];
   let closed = false;
@@ -471,6 +516,39 @@ async function runWithQuestions(env, operation) {
   } finally {
     rl.close();
   }
+}
+
+/**
+ * Read every line from a (non-TTY) stream into an array. We wait for the
+ * stream to finish before returning so late-arriving buffered lines aren't
+ * dropped.
+ *
+ * @param {NodeJS.ReadableStream} stream
+ * @returns {Promise<string[]>}
+ */
+function readAllLines(stream) {
+  return new Promise((resolve, reject) => {
+    if (!stream || typeof stream.on !== 'function') {
+      resolve([]);
+      return;
+    }
+    const lines = [];
+    let buf = '';
+    stream.setEncoding('utf8');
+    stream.on('data', chunk => {
+      buf += chunk;
+      const parts = buf.split('\n');
+      // Keep the tail (after the last \n) in the buffer for the next chunk;
+      // push every complete line immediately.
+      buf = parts.pop();
+      for (const line of parts) lines.push(line);
+    });
+    stream.on('end', () => {
+      if (buf.length > 0) lines.push(buf);
+      resolve(lines);
+    });
+    stream.on('error', reject);
+  });
 }
 
 /**
@@ -557,6 +635,7 @@ async function runCli(args, env = {}) {
         options.git = false;
       }
       options.templates = collectRepeated(args.slice(1), '--template');
+      options.components = collectRepeated(args.slice(1), '--component');
       options.exclude = collectRepeated(args.slice(1), '--exclude');
       const result = await runInitWorkflow(options, { cwd: env.cwd });
       stdout.write(`Initialized ignorekit project at ${result.projectPath}\n`);
@@ -580,10 +659,10 @@ async function runCli(args, env = {}) {
       options.templates = collectRepeated(args.slice(1), '--template');
       options.components = collectRepeated(args.slice(1), '--component');
       options.exclude = collectRepeated(args.slice(1), '--exclude');
-      const adoptEnv = { stdout, stderr, cwd: env.cwd };
-      // adopt also benefits from confirmation when input is interactive.
-      const adoptConfirm = createConfirm({ stdout, stdin: env.stdin, ask: env.ask });
-      if (adoptConfirm) adoptEnv.confirm = adoptConfirm;
+      // Route through buildCreateEnv so --yes (and TTY/CI detection) honor the
+      // same rules as `create`. Previously `adopt --yes` still prompted because
+      // the inline createConfirm here didn't see the --yes flag.
+      const adoptEnv = buildCreateEnv({ stdout, stderr, cwd: env.cwd, stdin: env.stdin, ask: env.ask }, options.yes);
       const result = await runAdoptWorkflow(options, adoptEnv);
       if (result.configPath === null) {
         // user cancelled
@@ -634,4 +713,4 @@ async function runCli(args, env = {}) {
   }
 }
 
-module.exports = { parseArgs, runCli };
+module.exports = { parseArgs, runCli, pickPresetInteractive, runWithQuestions };

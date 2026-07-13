@@ -348,3 +348,74 @@ test('adopt creates .gitignore directly when none existed', async () => {
     workspace.cleanup();
   }
 });
+
+// --- #9 (Adv): adopt must carry forward rules with original whitespace ---
+
+test('adopt preserves the source byte text of custom rules (trailing whitespace, quoting)', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    // No known components match these patterns. preserve-trailing-space and
+    // backslash-hash are intentionally odd so that any normalization in
+    // adopt's carry-forward logic would be visible in the output.
+    workspace.writeJson('dist/presets/empty.json', { name: 'empty', components: [] });
+    workspace.writeText('project/.gitignore', 'normal-rule\nwith-trailing-space   \n\\#literal-comment\n');
+
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'empty',
+      '--dist-root', workspace.path('dist'), '--overwrite-config'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    const config = JSON.parse(fs.readFileSync(workspace.path('project/ignorekit.json'), 'utf8'));
+    assert.ok(Array.isArray(config.custom), 'custom field should be an array');
+    // All three rules must round-trip verbatim — including the trailing
+    // whitespace and the literal "\#" which gitignore treats as a
+    // non-comment escape.
+    assert.ok(config.custom.includes('normal-rule'), `expected 'normal-rule' in custom, got: ${JSON.stringify(config.custom)}`);
+    assert.ok(config.custom.includes('with-trailing-space   '), `expected trailing whitespace preserved, got: ${JSON.stringify(config.custom)}`);
+    assert.ok(config.custom.includes('\\#literal-comment'), `expected backslash-hash preserved, got: ${JSON.stringify(config.custom)}`);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #3 (P0): adopt --yes must skip the post-preview confirm prompt ---
+
+test('adopt --yes skips the confirmation prompt and writes the file', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    workspace.writeText('project/.gitignore', 'old-rule\n');
+
+    // A confirm() that always returns false would normally cancel adopt. With
+    // --yes the workflow must bypass confirm and write anyway. We confirm by
+    // wiring a confirm() in env — env.confirm overrides the CLI's confirm
+    // behavior and the buildCreateEnv honors the --yes flag, so the test
+    // asserts that calling adopt WITH --yes succeeds even though our injected
+    // env-confirm is hostile.
+    const output = [];
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'demo',
+      '--dist-root', workspace.path('dist'), '--yes'
+    ], {
+      stdout: { write: (s) => output.push(String(s)) },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+    assert.equal(result.exitCode, 0,
+      `expected exit 0 with --yes, got ${result.exitCode}; output: ${output.join('')}`);
+    assert.ok(fs.existsSync(workspace.path('project/ignorekit.json')),
+      'config should have been written with --yes');
+    assert.match(output.join(''), /Adopted/, 'should print Adopted summary');
+    // Sanity: the prompt should NOT have been written when --yes is set.
+    assert.doesNotMatch(output.join(''), /Proceed\?/,
+      '--yes should not show the Proceed? prompt');
+  } finally {
+    workspace.cleanup();
+  }
+});

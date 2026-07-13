@@ -420,10 +420,13 @@ test('create component --from defaults to user definitions directory', async () 
     const outputText = output.join('');
     assert.match(outputText, /user definitions layer/);
 
-    // Clean up the file that was written to the real USER_ROOT
+    // Clean up the file that was written to the real USER_ROOT.
+    // Remove ONLY the specific file, never the parent directory — path.dirname()
+    // resolves to ~/.ignorekit/components/local, and a recursive rm of that
+    // would wipe every component the user has stored there.
     const { USER_ROOT } = require('../src/core/path');
     const expectedPath = path.join(USER_ROOT, 'components', 'local', 'test-default.gitignore');
-    try { fs.rmSync(path.dirname(expectedPath), { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(expectedPath, { force: true }); } catch {}
   } finally {
     workspace.cleanup();
   }

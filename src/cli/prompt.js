@@ -43,9 +43,17 @@ function createConfirm(env, { prompt = DEFAULT_PROMPT } = {}) {
     return async () => interpretConfirm(await Promise.resolve(env.ask(prompt)));
   }
 
-  const isTTY = stdin && typeof stdin.isTTY === 'boolean'
-    ? stdin.isTTY
-    : (typeof process !== 'undefined' && process.stdin && process.stdin.isTTY);
+  // CI/CI-like environments (CI flag, explicit override) cannot answer an
+  // interactive prompt. Return null so callers skip confirmation rather than
+  // hanging forever waiting for input that will never arrive.
+  if (process.env.IGNOREKIT_NONINTERACTIVE || process.env.CI) return null;
+
+  // An explicitly-passed stdin (tests, piped input) is authoritative: if it
+  // does not advertise a TTY, treat it as non-interactive. Falling back to
+  // process.stdin.isTTY when stdin.isTTY is undefined can lie about the input
+  // source — some test runners don't set isTTY at all and the previous
+  // heuristic silently downgraded those to "definitely a TTY".
+  const isTTY = !!(stdin && stdin.isTTY);
   if (!isTTY) return null;
 
   return () => new Promise((resolve) => {

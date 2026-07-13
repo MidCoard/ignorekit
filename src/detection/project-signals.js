@@ -2,11 +2,13 @@
 
 const fs = require('fs');
 const path = require('path');
+const { debugError } = require('../core/debug');
 
 function readJsonIfPresent(filePath) {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch {
+  } catch (err) {
+    debugError(err, 'project-signals.readJson');
     return null;
   }
 }

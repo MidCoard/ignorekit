@@ -6,6 +6,7 @@ const { normalizeProjectConfig } = require('../config/project-config');
 const { resolvePresetComponents, resolvePresetChain } = require('../definitions/resolver');
 const { buildResolver } = require('../cli/resolver-factory');
 const { parseSignificantLines } = require('../core/text');
+const { debugError } = require('../core/debug');
 
 /**
  * Format a brief summary of component content for the table.
@@ -62,7 +63,8 @@ function runExplainWorkflow(options, env) {
   if (config.preset) {
     try {
       chain = resolvePresetChain(resolver, config.preset);
-    } catch {
+    } catch (err) {
+      debugError(err, 'explain.chain');
       // Chain resolution failed — chain remains null
     }
   }
@@ -92,7 +94,8 @@ function runExplainWorkflow(options, env) {
         const own = Array.isArray(presetDef.components) ? presetDef.components : [];
         ownComponentsMap.set(presetId, own);
       }
-    } catch {
+    } catch (err) {
+      debugError(err, 'explain.preset-components');
       // Fallback: show all under the preset name
       ownComponentsMap.set(config.preset, presetComponents);
     }

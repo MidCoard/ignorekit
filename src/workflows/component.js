@@ -45,6 +45,7 @@ function assertSegment(value, label) {
  */
 async function runComponentCreate(options, env) {
   const stdout = env.stdout || process.stdout;
+  const stderr = env.stderr || process.stderr;
   assertSegment(options.category, 'category');
   assertSegment(options.name, 'component name');
 
@@ -55,6 +56,16 @@ async function runComponentCreate(options, env) {
   const outputPath = resolveInside(outputRoot, path.join('components', `${id}.gitignore`));
   if (fs.existsSync(outputPath) && !options.overwrite) {
     throw new Error(`Component already exists: ${outputPath}. Use --overwrite to replace it.`);
+  }
+
+  // --user-root only affects discovery. Without an explicit --output-root the
+  // file lands in the user's personal definitions layer (~/.ignorekit), which
+  // is the default. Surface that explicitly so users on a team-shared user
+  // root (--user-root /shared/team-defs) aren't surprised when their component
+  // doesn't show up next to the rest of their discovery sources.
+  if (options.userRoot && !options.outputRoot) {
+    stderr.write(`Note: --user-root is a discovery source. Without --output-root, the file is written to ${USER_ROOT} (the default user definitions layer).\n`);
+    stderr.write(`      Pass --output-root to write somewhere else.\n`);
   }
 
   let rules = Array.isArray(options.rules) ? options.rules : [];
