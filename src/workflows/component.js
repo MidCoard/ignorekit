@@ -62,8 +62,11 @@ async function runComponentCreate(options, env) {
   // file lands in the user's personal definitions layer (~/.ignorekit), which
   // is the default. Surface that explicitly so users on a team-shared user
   // root (--user-root /shared/team-defs) aren't surprised when their component
-  // doesn't show up next to the rest of their discovery sources.
-  if (options.userRoot && !options.outputRoot) {
+  // doesn't show up next to the rest of their discovery sources. Use the
+  // `_userRootExplicit` flag set by applyUserRootDefault so the warning only
+  // fires when the user actually typed --user-root — the silent default
+  // would otherwise produce a confusing note on every create.
+  if (options._userRootExplicit && !options.outputRoot) {
     stderr.write(`Note: --user-root is a discovery source. Without --output-root, the file is written to ${USER_ROOT} (the default user definitions layer).\n`);
     stderr.write(`      Pass --output-root to write somewhere else.\n`);
   }

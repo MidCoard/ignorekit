@@ -30,8 +30,10 @@ async function runPresetCreate(options, env) {
     : USER_ROOT;
   // --user-root is a discovery source only. Without --output-root, the preset
   // is written to the personal definitions layer (~/.ignorekit) regardless of
-  // what --user-root points at, so callers always know where to find it.
-  if (options.userRoot && !options.outputRoot) {
+  // what --user-root points at, so callers always know where to find it. The
+  // `_userRootExplicit` flag is set by applyUserRootDefault so the warning
+  // only fires when the user actually typed --user-root.
+  if (options._userRootExplicit && !options.outputRoot) {
     stderr.write(`Note: --user-root is a discovery source. Without --output-root, the file is written to ${USER_ROOT} (the default user definitions layer).\n`);
     stderr.write(`      Pass --output-root to write somewhere else.\n`);
   }

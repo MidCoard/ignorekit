@@ -398,3 +398,442 @@ test('createConfirm returns null under IGNOREKIT_NONINTERACTIVE', async () => {
     else process.env.IGNOREKIT_NONINTERACTIVE = prev;
   }
 });
+
+// --- #1: collectRepeated must accept --key=value as well as --key value ---
+
+test('init --component=foo --component=bar collects both as repeated values', async () => {
+  // The dispatcher collects repeated options by scanning the raw argv with
+  // collectRepeated; init, adopt, create component, and create preset all
+  // rely on it. Round 2 broke the --key=value form — this test exercises the
+  // equals form end-to-end via runCli/init, which is the surface that
+  // actually broke for users.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/language/node.gitignore', 'node_modules/\n');
+    workspace.writeText('dist/components/framework/vite.gitignore', 'dist/\n');
+    workspace.writeJson('dist/presets/generic.json', { name: 'generic', components: [] });
+
+    const result = await runCli([
+      'init', workspace.path('project'),
+      '--preset', 'generic',
+      '--component=language/node',
+      '--component=framework/vite',
+      '--no-git',
+      '--dist-root', workspace.path('dist'),
+      '--yes'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+    assert.equal(result.exitCode, 0);
+    const cfg = JSON.parse(fs.readFileSync(workspace.path('project/ignorekit.json'), 'utf8'));
+    assert.ok(cfg.components.includes('language/node'),
+      'expected language/node in components');
+    assert.ok(cfg.components.includes('framework/vite'),
+      'expected framework/vite in components');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('adopt --component=foo --component=bar collects both as repeated values', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/language/node.gitignore', 'node_modules/\n');
+    workspace.writeText('dist/components/framework/vite.gitignore', 'dist/\n');
+    workspace.writeJson('dist/presets/empty.json', { name: 'empty', components: [] });
+    fs.mkdirSync(workspace.path('project'));
+
+    const result = await runCli([
+      'adopt', workspace.path('project'),
+      '--preset', 'empty',
+      '--component=language/node',
+      '--component=framework/vite',
+      '--dist-root', workspace.path('dist')
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+    assert.equal(result.exitCode, 0);
+    const cfg = JSON.parse(fs.readFileSync(workspace.path('project/ignorekit.json'), 'utf8'));
+    assert.deepEqual(cfg.components, ['language/node', 'framework/vite']);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('create preset --component=foo --component=bar collects both as repeated values', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeJson('dist/presets/vite.json', { name: 'vite', components: [] });
+
+    const result = await runCli([
+      'create', 'preset', 'team-stack',
+      '--base', 'vite',
+      '--component=language/node',
+      '--component=framework/vite',
+      '--yes',
+      '--output-root', workspace.path('defs'),
+      '--dist-root', workspace.path('dist')
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+    assert.equal(result.exitCode, 0);
+    const preset = JSON.parse(fs.readFileSync(workspace.path('defs/presets/team-stack.json'), 'utf8'));
+    assert.deepEqual(preset.components, ['language/node', 'framework/vite']);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('init --exclude=foo --exclude=bar collects both as repeated values', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/platform/macos.gitignore', '.DS_Store\n');
+    workspace.writeText('dist/components/platform/windows.gitignore', 'Thumbs.db\n');
+    workspace.writeJson('dist/presets/generic.json', { name: 'generic', components: ['platform/macos', 'platform/windows'] });
+
+    const result = await runCli([
+      'init', workspace.path('project'),
+      '--preset', 'generic',
+      '--exclude=platform/macos',
+      '--exclude=platform/windows',
+      '--no-git',
+      '--dist-root', workspace.path('dist'),
+      '--yes'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+    assert.equal(result.exitCode, 0);
+    const cfg = JSON.parse(fs.readFileSync(workspace.path('project/ignorekit.json'), 'utf8'));
+    assert.deepEqual(cfg.exclude, ['platform/macos', 'platform/windows']);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #13: parseArgs boolean validation rejects inline values + empty key ---
+
+test('parseArgs rejects --yes=false inline value on a boolean flag', () => {
+  assert.throws(
+    () => parseArgs(['--yes=false']),
+    /--yes=false does not take a value/
+  );
+});
+
+test('parseArgs rejects --git=true inline value on a boolean flag', () => {
+  assert.throws(
+    () => parseArgs(['--git=true']),
+    /--git=true does not take a value/
+  );
+});
+
+test('parseArgs rejects --=value with empty key', () => {
+  assert.throws(
+    () => parseArgs(['--=value']),
+    /missing a flag name/
+  );
+});
+
+test('parseArgs still accepts --yes without a value', () => {
+  const options = parseArgs(['--yes']);
+  assert.equal(options.yes, true);
+});
+
+test('parseArgs accepts a value with spaces after --key=', () => {
+  // `--key=value with spaces` is one token; the entire suffix after = becomes
+  // the value. This is standard POSIX-style behavior.
+  const options = parseArgs(['--preset=value with spaces']);
+  assert.equal(options.preset, 'value with spaces');
+});
+
+// --- #14: applyUserRootDefault must record explicit user intent ---
+
+test('applyUserRootDefault marks _userRootExplicit=true when --user-root was passed', () => {
+  const { applyUserRootDefault } = require('../src/cli/resolver-factory');
+  const options = { userRoot: '/some/where' };
+  applyUserRootDefault(options);
+  assert.equal(options.userRoot, '/some/where');
+  assert.equal(options._userRootExplicit, true);
+});
+
+test('applyUserRootDefault marks _userRootExplicit=false when --user-root was omitted', () => {
+  const { applyUserRootDefault } = require('../src/cli/resolver-factory');
+  const options = {};
+  applyUserRootDefault(options);
+  // The default USER_ROOT path is applied (preserving the historical CLI UX).
+  assert.ok(options.userRoot, 'userRoot should be defaulted to USER_ROOT');
+  assert.equal(options._userRootExplicit, false);
+});
+
+test('create component without --user-root does not emit the discovery-source warning', async () => {
+  // Without an explicit --user-root the warning must NOT fire — only the
+  // default user definitions layer is in use and the user did not opt into a
+  // team-shared discovery directory.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('.gitignore', 'unique-rule-only-this-test/\n');
+    const writes = [];
+    const result = await runCli([
+      'create', 'component', 'explicit-flag-test',
+      '--category', 'local',
+      '--from', workspace.path('.gitignore'),
+      '--yes',
+      '--output-root', workspace.path('defs'),
+      '--dist-root', workspace.path('dist')
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: text => writes.push(String(text)) },
+      cwd: workspace.root
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(
+      writes.join('').match(/--user-root is a discovery source/g),
+      null,
+      'discovery-source warning should not fire without explicit --user-root'
+    );
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #2: readAllLines handles CRLF input and close-without-end streams ---
+
+test('readAllLines strips CRLF terminators so CRLF and LF inputs match', async () => {
+  // readAllLines is module-private; the only public surface that uses it is
+  // runWithQuestions in the piped (non-TTY) branch. Drive it through a
+  // PassThrough to assert the line-streaming contract.
+  const { runWithQuestions } = require('../src/cli');
+  const { PassThrough } = require('stream');
+  const stdin = new PassThrough();
+  stdin.isTTY = false;
+  setImmediate(() => {
+    stdin.write('first\r\nsecond\r\nthird\r\n');
+    stdin.end();
+  });
+  const answers = [];
+  await runWithQuestions(
+    { stdin, stdout: { write: () => {} } },
+    async ask => {
+      answers.push(await ask('1: '));
+      answers.push(await ask('2: '));
+      answers.push(await ask('3: '));
+    }
+  );
+  assert.deepEqual(answers, ['first', 'second', 'third']);
+});
+
+test('readAllLines resolves on stream close when end never fires', async () => {
+  // PassThrough with destroy() simulates a parent process that pipes a
+  // one-shot answer and never closes stdin cleanly — the original code hung
+  // waiting for 'end'.
+  const { runWithQuestions } = require('../src/cli');
+  const { PassThrough } = require('stream');
+  const stdin = new PassThrough();
+  stdin.isTTY = false;
+  setImmediate(() => {
+    stdin.write('only-line\n');
+    stdin.destroy();
+  });
+  const answers = [];
+  await runWithQuestions(
+    { stdin, stdout: { write: () => {} } },
+    async ask => {
+      answers.push(await ask('1: '));
+    }
+  );
+  assert.deepEqual(answers, ['only-line']);
+});
+
+// --- #3: runWithQuestions returns null under IGNOREKIT_NONINTERACTIVE ---
+
+test('runWithQuestions resolves ask() with null under IGNOREKIT_NONINTERACTIVE', async () => {
+  const { runWithQuestions } = require('../src/cli');
+  const prev = process.env.IGNOREKIT_NONINTERACTIVE;
+  process.env.IGNOREKIT_NONINTERACTIVE = '1';
+  try {
+    const errors = [];
+    let captured;
+    await runWithQuestions(
+      { stdin: { isTTY: true }, stdout: { write: () => {} }, stderr: { write: t => errors.push(String(t)) } },
+      async ask => {
+        captured = await ask('Q: ');
+      }
+    );
+    assert.equal(captured, null, 'ask() should resolve with null under non-interactive mode');
+    assert.match(errors.join(''), /Interactive prompt skipped/);
+  } finally {
+    if (prev === undefined) delete process.env.IGNOREKIT_NONINTERACTIVE;
+    else process.env.IGNOREKIT_NONINTERACTIVE = prev;
+  }
+});
+
+test('runWithQuestions resolves ask() with null under CI even with TTY-like stdin', async () => {
+  const { runWithQuestions } = require('../src/cli');
+  const prev = process.env.CI;
+  process.env.CI = '1';
+  try {
+    let captured;
+    await runWithQuestions(
+      { stdin: { isTTY: true }, stdout: { write: () => {} }, stderr: { write: () => {} } },
+      async ask => {
+        captured = await ask('Q: ');
+      }
+    );
+    assert.equal(captured, null, 'ask() should resolve with null under CI');
+  } finally {
+    if (prev === undefined) delete process.env.CI; else process.env.CI = prev;
+  }
+});
+
+test('env.ask is honored under IGNOREKIT_NONINTERACTIVE', async () => {
+  // When a test harness (or a parent process) provides env.ask explicitly,
+  // it drives every prompt regardless of the non-interactive env flag.
+  const { runWithQuestions } = require('../src/cli');
+  const prev = process.env.IGNOREKIT_NONINTERACTIVE;
+  process.env.IGNOREKIT_NONINTERACTIVE = '1';
+  try {
+    const answers = [];
+    await runWithQuestions(
+      { stdin: { isTTY: true }, stdout: { write: () => {} }, stderr: { write: () => {} },
+        ask: async () => 'canned' },
+      async ask => {
+        answers.push(await ask('Q: '));
+        answers.push(await ask('Q2: '));
+      }
+    );
+    assert.deepEqual(answers, ['canned', 'canned']);
+  } finally {
+    if (prev === undefined) delete process.env.IGNOREKIT_NONINTERACTIVE;
+    else process.env.IGNOREKIT_NONINTERACTIVE = prev;
+  }
+});
+
+// --- #4: pickPresetInteractive availability-checked shortcuts ---
+
+test('pickPresetInteractive omits "b. blank" when blank preset is absent', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeJson('dist/presets/alpha.json', { name: 'alpha', components: [] });
+    workspace.writeJson('dist/presets/zeta.json', { name: 'zeta', components: [] });
+
+    const { pickPresetInteractive } = require('../src/cli');
+    const writes = [];
+    const result = await pickPresetInteractive(
+      { distRoot: workspace.path('dist') },
+      {
+        stdout: { write: text => writes.push(String(text)) },
+        stdin: { isTTY: true },
+        ask: async () => ''
+      }
+    );
+    assert.equal(result, null);
+    assert.equal(writes.join('').match(/b\. blank/g), null,
+      'should not advertise a blank shortcut when blank preset is absent');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('pickPresetInteractive omits "g. generic" when generic preset is absent', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeJson('dist/presets/alpha.json', { name: 'alpha', components: [] });
+    workspace.writeJson('dist/presets/blank.json', { name: 'blank', components: [] });
+
+    const { pickPresetInteractive } = require('../src/cli');
+    const writes = [];
+    await pickPresetInteractive(
+      { distRoot: workspace.path('dist') },
+      {
+        stdout: { write: text => writes.push(String(text)) },
+        stdin: { isTTY: true },
+        ask: async () => ''
+      }
+    );
+    assert.equal(writes.join('').match(/g\. generic/g), null,
+      'should not advertise a generic shortcut when generic preset is absent');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('pickPresetInteractive rejects "b" shortcut when blank preset is absent', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeJson('dist/presets/alpha.json', { name: 'alpha', components: [] });
+
+    const { pickPresetInteractive } = require('../src/cli');
+    const writes = [];
+    const result = await pickPresetInteractive(
+      { distRoot: workspace.path('dist') },
+      {
+        stdout: { write: text => writes.push(String(text)) },
+        stdin: { isTTY: true },
+        ask: async () => 'b'
+      }
+    );
+    assert.equal(result, null);
+    assert.match(writes.join(''), /'blank' preset is not available/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #17: picker stderr message under non-interactive mode ---
+
+test('init --preset-less under IGNOREKIT_NONINTERACTIVE prints stderr guidance and exits 1', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/alpha.json', { name: 'alpha', components: [] });
+
+    const prev = process.env.IGNOREKIT_NONINTERACTIVE;
+    process.env.IGNOREKIT_NONINTERACTIVE = '1';
+    const errors = [];
+    try {
+      const result = await runCli([
+        'init', workspace.path('project'),
+        '--no-git',
+        '--dist-root', workspace.path('dist'),
+        '--yes'
+      ], {
+        stdout: { write: () => {} },
+        stderr: { write: text => errors.push(String(text)) },
+        stdin: { isTTY: false },
+        cwd: workspace.root
+      });
+      assert.equal(result.exitCode, 1);
+      assert.match(errors.join(''), /No default preset available/);
+    } finally {
+      if (prev === undefined) delete process.env.IGNOREKIT_NONINTERACTIVE;
+      else process.env.IGNOREKIT_NONINTERACTIVE = prev;
+    }
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #5: parseSignificantLines keepRaw returns {original} only ---
+
+test('parseSignificantLines with keepRaw returns {original} entries', () => {
+  const { parseSignificantLines } = require('../src/core/text');
+  const lines = parseSignificantLines('cache/\n  trailing-space   \n\\#literal\n', { keepRaw: true });
+  assert.deepEqual(lines, [
+    { original: 'cache/' },
+    { original: '  trailing-space   ' },
+    { original: '\\#literal' }
+  ]);
+});
+
+test('parseSignificantLines without keepRaw returns strings (unchanged)', () => {
+  const { parseSignificantLines } = require('../src/core/text');
+  const lines = parseSignificantLines('cache/\n# comment\n\nsecret\n');
+  assert.deepEqual(lines, ['cache/', 'secret']);
+});

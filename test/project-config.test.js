@@ -146,3 +146,94 @@ test('fetchGitignoreIoTemplates rejects on timeout', async () => {
     delete require.cache[require.resolve('../src/providers/gitignore-io')];
   }
 });
+
+// --- #8: Content-Length and per-chunk size guard ---
+
+test('fetchGitignoreIoTemplates rejects oversized Content-Length before consuming the body', async () => {
+  // The original guard only checked `body.length > MAX_BYTES` after each chunk
+  // was concatenated, so a 2 MiB first chunk was already in memory by the
+  // time the rejection happened. The fix inspects Content-Length up front and
+  // rejects before any body buffer is allocated.
+  const EventEmitter = require('events');
+  const https = require('https');
+  const origGet = https.get;
+
+  https.get = function mockGet(url, options, callback) {
+    const req = new EventEmitter();
+    req.destroy = (err) => {
+      req._destroyed = err;
+      // Real http.ClientRequest.destroy(err) emits 'error' on the request so
+      // upstream listeners (the rejection handler in fetchGitignoreIoTemplates)
+      // can act on the destroy reason. The mock must do the same or the
+      // promise stays pending and the test hangs.
+      if (err) req.emit('error', err);
+    };
+    const response = new EventEmitter();
+    response.headers = { 'content-length': String(2 * 1024 * 1024) };
+    response.statusCode = 200;
+    process.nextTick(() => callback(response));
+    return req;
+  };
+
+  try {
+    const { fetchGitignoreIoTemplates } = require('../src/providers/gitignore-io');
+    delete require.cache[require.resolve('../src/providers/gitignore-io')];
+    const fresh = require('../src/providers/gitignore-io');
+
+    await assert.rejects(
+      fresh.fetchGitignoreIoTemplates(['Node']),
+      /too large/
+    );
+  } finally {
+    https.get = origGet;
+    delete require.cache[require.resolve('../src/providers/gitignore-io')];
+  }
+});
+
+test('fetchGitignoreIoTemplates rejects when body+chunk exceeds MAX_BYTES', async () => {
+  // Per-chunk guard: server does not advertise Content-Length, so we still
+  // need to reject mid-stream when accumulated bytes cross the cap.
+  const EventEmitter = require('events');
+  const https = require('https');
+  const origGet = https.get;
+
+  https.get = function mockGet(url, options, callback) {
+    const req = new EventEmitter();
+    req.destroy = (err) => {
+      req._destroyed = err;
+      if (err) req.emit('error', err);
+    };
+    const response = new EventEmitter();
+    response.headers = {}; // no Content-Length
+    response.statusCode = 200;
+    response.setEncoding = () => {};
+    process.nextTick(() => {
+      callback(response);
+      // Emit a single oversized chunk — exceeds 1 MiB on its own.
+      setImmediate(() => response.emit('data', 'x'.repeat(2 * 1024 * 1024)));
+    });
+    return req;
+  };
+
+  try {
+    const { fetchGitignoreIoTemplates } = require('../src/providers/gitignore-io');
+    delete require.cache[require.resolve('../src/providers/gitignore-io')];
+    const fresh = require('../src/providers/gitignore-io');
+
+    // The implementation calls req.destroy(new Error(...)) on the over-cap
+    // chunk, which then bubbles through the response 'error' / 'close' path.
+    // The promise resolves via the standard rejection pathway when destroy
+    // is invoked with an Error.
+    let rejected = false;
+    try {
+      await fresh.fetchGitignoreIoTemplates(['Node']);
+    } catch (err) {
+      rejected = true;
+      assert.match(err.message, /exceeded/);
+    }
+    assert.equal(rejected, true, 'oversized body must reject');
+  } finally {
+    https.get = origGet;
+    delete require.cache[require.resolve('../src/providers/gitignore-io')];
+  }
+});

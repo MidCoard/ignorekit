@@ -2,12 +2,13 @@
 
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 const { readJson } = require('./core/json');
 const { DIST_ROOT } = require('./core/path');
 const { normalizeProjectConfig } = require('./config/project-config');
 const { resolvePresetChain } = require('./definitions/resolver');
 const { buildResolver, applyUserRootDefault } = require('./cli/resolver-factory');
-const { createConfirm } = require('./cli/prompt');
+const { createConfirm, isInteractive } = require('./cli/prompt');
 const { generateGitignore } = require('./generator');
 const { runInitWorkflow } = require('./workflows/init');
 const { runAdoptWorkflow } = require('./workflows/adopt');
@@ -43,8 +44,18 @@ function parseArgs(args) {
       inlineValue = body.slice(eq + 1);
       body = body.slice(0, eq);
     }
+    if (body.length === 0) {
+      throw new Error(`Option ${arg} is missing a flag name.`);
+    }
     const key = body.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
     if (BOOLEAN_OPTIONS.has(key)) {
+      // Boolean flags must not silently accept `--yes=false` style values —
+      // the spec is "presence of the flag is true". Reject any inline value so
+      // the user finds out immediately instead of seeing an option they did
+      // not intend to flip.
+      if (inlineValue !== null) {
+        throw new Error(`Option ${arg} does not take a value.`);
+      }
       options[key] = true;
       continue;
     }
@@ -62,11 +73,23 @@ function parseArgs(args) {
   return options;
 }
 
+/**
+ * Walk the raw argv once and collect every value supplied for `optionName`,
+ * accepting both `--flag value` (consumes the next token) and `--flag=value`
+ * (slices the suffix). Returns values in argument order so repeated use of
+ * `--component foo --component bar` and `--component=foo --component=bar`
+ * produce the same result. Empty-looking values are preserved so a deliberate
+ * `--output-root ""` is not silently dropped.
+ */
 function collectRepeated(args, optionName) {
   const values = [];
   for (let index = 0; index < args.length; index += 1) {
-    if (args[index] === optionName && args[index + 1]) {
+    const arg = args[index];
+    if (arg === optionName && index + 1 < args.length) {
       values.push(args[index + 1]);
+      index += 1;
+    } else if (arg.startsWith(optionName + '=')) {
+      values.push(arg.slice(optionName.length + 1));
     }
   }
   return values;
@@ -357,8 +380,6 @@ async function commandGenerate(args, env) {
 
 // --- Interactive preset picker ---
 
-const readline = require('readline');
-
 /**
  * Interactive preset picker. When --preset is missing:
  * 1. If there's a .gitignore, analyze it and suggest the best match
@@ -409,11 +430,23 @@ async function pickPresetInteractive(options, env) {
     return null;
   }
 
-  // Quick-access options: generic (safe default) and blank (no preset)
-  stdout.write('Quick options:\n');
-  stdout.write('  g. generic (safe default — platform, editor, secrets, logs)\n');
-  stdout.write('  b. blank (no components — build from scratch)\n');
-  stdout.write('\n');
+  // Quick-access options: generic (safe default) and blank (no preset).
+  // Each shortcut is only advertised when the preset is actually present in the
+  // active resolver; otherwise the prompt text and the 'g'/'b' shortcut handler
+  // would drift apart (the prompt would offer a shortcut the handler then
+  // refuses). Compute availability once and reuse it below.
+  const hasGeneric = presetIds.includes('generic');
+  const hasBlank = presetIds.includes('blank');
+  if (hasGeneric || hasBlank) {
+    stdout.write('Quick options:\n');
+    if (hasGeneric) {
+      stdout.write('  g. generic (safe default — platform, editor, secrets, logs)\n');
+    }
+    if (hasBlank) {
+      stdout.write('  b. blank (no components — build from scratch)\n');
+    }
+    stdout.write('\n');
+  }
 
   stdout.write('Available presets:\n');
   for (let i = 0; i < presetIds.length; i++) {
@@ -427,14 +460,23 @@ async function pickPresetInteractive(options, env) {
   // or 'angular' depending on what's been added at the user layer). When there
   // is no suggestion and no 'generic' preset available, refuse to default and
   // require the user to pick explicitly.
-  const safeDefault = suggestion || (presetIds.includes('generic') ? 'generic' : null);
+  const safeDefault = suggestion || (hasGeneric ? 'generic' : null);
   const defaultLabel = safeDefault || '(choose one)';
   // Read user input. Route through runWithQuestions so prompt reading uses a
   // single readline lifecycle shared with the create flow.
   const answer = await runWithQuestions(
-    { stdin, stdout, ask: env.ask },
+    { stdin, stdout, ask: env.ask, stderr: env.stderr },
     ask => ask(`Pick a preset (name, number, or g/b) [${defaultLabel}]: `)
   );
+
+  if (answer === null) {
+    // runWithQuestions gave up under non-interactive mode and there's no safe
+    // default to fall back on. Surface this so the caller can exit with a
+    // helpful error rather than silently printing exit 1 with no stderr.
+    const stderr = env.stderr || process.stderr;
+    stderr.write('No default preset available. Pass --preset <name> explicitly.\n');
+    return null;
+  }
 
   if (answer.trim() === '') {
     if (safeDefault) return safeDefault;
@@ -444,11 +486,15 @@ async function pickPresetInteractive(options, env) {
 
   const v = answer.trim().toLowerCase();
   if (v === 'g' || v === 'generic') {
-    if (presetIds.includes('generic')) return 'generic';
+    if (hasGeneric) return 'generic';
     stdout.write(`'generic' preset is not available.\n`);
     return null;
   }
-  if (v === 'b' || v === 'blank') return 'blank';
+  if (v === 'b' || v === 'blank') {
+    if (hasBlank) return 'blank';
+    stdout.write(`'blank' preset is not available.\n`);
+    return null;
+  }
 
   const num = parseInt(v, 10);
   if (Number.isInteger(num) && num >= 1 && num <= presetIds.length) return presetIds[num - 1];
@@ -467,6 +513,20 @@ async function runWithQuestions(env, operation) {
 
   const stdin = env.stdin || process.stdin;
   const stdout = env.stdout || process.stdout;
+  const stderr = env.stderr || process.stderr;
+
+  // CI / IGNOREKIT_NONINTERACTIVE cannot answer an interactive prompt at all.
+  // Returning a no-op ask() that resolves with null signals "we gave up" —
+  // callers (e.g. the preset picker) translate null into a stderr message
+  // and exit non-zero rather than hanging forever.
+  if (process.env.IGNOREKIT_NONINTERACTIVE || process.env.CI) {
+    const reason = process.env.IGNOREKIT_NONINTERACTIVE ? 'IGNOREKIT_NONINTERACTIVE' : 'CI';
+    stderr.write(`Interactive prompt skipped (${reason} set).\n`);
+    function noop() {
+      return Promise.resolve(null);
+    }
+    return operation(noop);
+  }
 
   // Piped (non-TTY) input: drain the entire stream into a buffer first so we
   // can serve the buffered lines one-per-ask without racing readline's async
@@ -519,9 +579,21 @@ async function runWithQuestions(env, operation) {
 }
 
 /**
- * Read every line from a (non-TTY) stream into an array. We wait for the
- * stream to finish before returning so late-arriving buffered lines aren't
- * dropped.
+ * Read every line from a (non-TTY) stream into an array.
+ *
+ * Two failure modes the original implementation missed:
+ *
+ *  - Some streams (PassThrough in tests, parent processes that pipe one-shot
+ *    answers) emit 'close' without ever firing 'end'. Listening only to 'end'
+ *    leaves the promise pending forever; also listen to 'close' and resolve
+ *    with whatever was buffered.
+ *  - Caller-owned streams that are paused will not deliver data until resumed.
+ *    Calling `stream.resume()` here is safe for already-flowing streams
+ *    (resume() is a no-op when the stream is not paused) and unblocks paused
+ *    streams that were passed in by a test harness.
+ *
+ *  Lines are stripped of trailing `\r` so CRLF input (`a\r\nb\r\n`) is treated
+ *  identically to LF input (`a\nb\n`).
  *
  * @param {NodeJS.ReadableStream} stream
  * @returns {Promise<string[]>}
@@ -534,20 +606,31 @@ function readAllLines(stream) {
     }
     const lines = [];
     let buf = '';
+    let settled = false;
+    function finish() {
+      if (settled) return;
+      settled = true;
+      if (buf.length > 0) lines.push(buf.replace(/\r+$/, ''));
+      resolve(lines);
+    }
     stream.setEncoding('utf8');
+    if (typeof stream.resume === 'function') stream.resume();
     stream.on('data', chunk => {
       buf += chunk;
       const parts = buf.split('\n');
       // Keep the tail (after the last \n) in the buffer for the next chunk;
-      // push every complete line immediately.
+      // push every completed line immediately, stripping terminal \r so CRLF
+      // and LF input produce identical output.
       buf = parts.pop();
-      for (const line of parts) lines.push(line);
+      for (const line of parts) lines.push(line.replace(/\r+$/, ''));
     });
-    stream.on('end', () => {
-      if (buf.length > 0) lines.push(buf);
-      resolve(lines);
+    stream.on('end', finish);
+    stream.on('close', finish);
+    stream.on('error', err => {
+      if (settled) return;
+      settled = true;
+      reject(err);
     });
-    stream.on('error', reject);
   });
 }
 

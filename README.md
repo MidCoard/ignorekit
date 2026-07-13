@@ -209,6 +209,14 @@ team shares definitions from another directory.
 
 AI tool components are opt-in. Add the tools your project actually uses as extra components in `ignorekit.json`.
 
+## Environment variables
+
+| Variable | Effect |
+|----------|--------|
+| `IGNOREKIT_DEBUG` | When set to any non-empty value, prints internal error messages that are otherwise swallowed (analysis failures, preset chain errors, etc.) to stderr. Useful when something silently does the wrong thing. |
+| `IGNOREKIT_NONINTERACTIVE` | When set, skips every interactive prompt (preset picker, guided creation, confirmations) instead of hanging. Returns an error if a required choice can't be defaulted. Honored in CI environments automatically. |
+| `CI` | Standard CI flag. Same effect as `IGNOREKIT_NONINTERACTIVE` — avoid interactive prompts. |
+
 ## Running tests
 
 ```bash

@@ -4,6 +4,25 @@ const childProcess = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+/**
+ * Translate a spawnSync result for git into either a thrown error or the
+ * captured stderr string. When the git binary is missing entirely,
+ * spawnSync returns `result.error` (an Error) and leaves `result.stderr`
+ * undefined — touching it then throws a TypeError that masks the real
+ * "git not found" message. Check `result.error` first, then fall back to
+ * stderr (stringified because `encoding: 'buffer'` returns Buffers).
+ */
+function gitErrorOrStderr(result, fallbackMessage) {
+  if (result.error) {
+    return new Error(`${fallbackMessage}: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const stderr = result.stderr == null ? '' : result.stderr.toString('utf8');
+    return new Error(stderr || fallbackMessage);
+  }
+  return null;
+}
+
 function getGitState(projectPath) {
   const dotGit = path.join(projectPath, '.git');
   if (fs.existsSync(dotGit)) {
@@ -13,6 +32,15 @@ function getGitState(projectPath) {
   const result = childProcess.spawnSync('git', ['-C', projectPath, 'rev-parse', '--show-toplevel'], {
     encoding: 'utf8'
   });
+  const failure = gitErrorOrStderr(result, 'git rev-parse failed');
+  if (failure) {
+    if (result.error && result.error.code === 'ENOENT') {
+      // git binary missing — not a repo, and there's no point reporting a
+      // "git failure" because the user simply doesn't have git installed.
+      return { state: 'not-a-repo', reason: 'git-not-found' };
+    }
+    return { state: 'not-a-repo' };
+  }
   if (result.status === 0) {
     return { state: 'inside-parent-repo', root: result.stdout.trim() };
   }
@@ -31,9 +59,8 @@ function ensureGitRepo(projectPath, options = {}) {
     cwd: projectPath,
     encoding: 'utf8'
   });
-  if (result.status !== 0) {
-    throw new Error(result.stderr || 'git init failed');
-  }
+  const failure = gitErrorOrStderr(result, 'git init failed');
+  if (failure) throw failure;
   return { action: 'initialized' };
 }
 
@@ -42,9 +69,8 @@ function listTrackedIgnoredFiles(projectPath) {
     cwd: projectPath,
     encoding: 'buffer'
   });
-  if (result.status !== 0) {
-    throw new Error(result.stderr.toString('utf8') || 'git ls-files failed');
-  }
+  const failure = gitErrorOrStderr(result, 'git ls-files failed');
+  if (failure) throw failure;
   return result.stdout.toString('utf8').split('\0').filter(Boolean);
 }
 
@@ -63,9 +89,8 @@ function removeCachedFiles(projectPath, files, options = {}) {
       cwd: projectPath,
       encoding: 'utf8'
     });
-    if (result.status !== 0) {
-      throw new Error(result.stderr || 'git rm --cached failed');
-    }
+    const failure = gitErrorOrStderr(result, 'git rm --cached failed');
+    if (failure) throw failure;
     removed.push(...batch);
   }
   return { action: 'removed', files: removed };
