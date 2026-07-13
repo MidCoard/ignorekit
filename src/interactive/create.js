@@ -164,13 +164,15 @@ async function chooseRulesSmart(state, env) {
   }
 
   // Build coverage annotations and pre-selection
-  // For each line, determine which (if any) known component covers it.
-  // Covered lines are pre-deselected (unless they are partial).
-  const coveredByLine = new Map(); // normalized line → component id
+  // A line is "covered" if ANY matched component contains it (full OR partial match).
+  // For full matches the component fully explains the line.
+  // For partial matches the line is one of the matched rules; the component just
+  // has additional rules the user didn't include.
+  const coveredByLine = new Map(); // line → { id, classification }
   for (const comp of analysis.matchedComponents) {
-    if (comp.classification === 'full') {
-      for (const line of comp.matched) {
-        coveredByLine.set(line, comp.id);
+    for (const line of comp.matched) {
+      if (!coveredByLine.has(line)) {
+        coveredByLine.set(line, { id: comp.id, classification: comp.classification });
       }
     }
   }
@@ -179,8 +181,9 @@ async function chooseRulesSmart(state, env) {
   for (let i = 0; i < lines.length; i += 1) {
     const cov = coveredByLine.get(lines[i]);
     if (cov) {
-      annotations[i] = `covered by ${cov}`;
-      // Pre-deselect fully covered rules
+      const marker = cov.classification === 'full' ? 'fully covered' : 'partially covered';
+      annotations[i] = `${marker} by ${cov.id}`;
+      // Pre-deselect covered rules — user can re-enable if they want
     } else {
       initialSelected.add(i);
     }
@@ -199,12 +202,20 @@ async function promptComponentCreation(options, env) {
   const categories = [...new Set(resolver.listComponents().map(id => id.split('/')[0]))].sort();
   writeIndexedList(env.stdout, 'Available categories', categories);
 
+  // Default source path: ./gitignore if it exists in cwd
+  const defaultSourcePath = fs.existsSync(path.join(env.cwd, '.gitignore'))
+    ? path.join(env.cwd, '.gitignore')
+    : '';
+  const sourcePrompt = defaultSourcePath
+    ? `Source .gitignore (optional) [${defaultSourcePath}]: `
+    : 'Source .gitignore (optional): ';
+
   const state = {
     category: normalizeAnswer(await env.ask('Category (local): ')) || 'local',
     name: normalizeAnswer(await env.ask('Component name: ')),
-    sourcePath: normalizeAnswer(await env.ask('Source .gitignore (optional): ')),
+    sourcePath: normalizeAnswer(await env.ask(sourcePrompt)) || defaultSourcePath,
     rules: [],
-    outputRoot: null
+    outputRoot: options.userRoot || USER_ROOT  // default to user scope
   };
   if (state.sourcePath) state.sourcePath = path.resolve(env.cwd, state.sourcePath);
 
@@ -225,38 +236,7 @@ async function promptComponentCreation(options, env) {
     state.rules = rules;
   }
 
-  state.outputRoot = await chooseOutputRoot(state, env);
-
-  while (true) {
-    const outputPath = path.join(state.outputRoot, 'components', state.category, `${state.name}.gitignore`);
-    env.stdout.write(`\nComponent: ${state.category}/${state.name}\nRules: ${state.rules.length}\nOutput: ${outputPath}\n`);
-    const action = normalizeAnswer(await env.ask('Review [write/name/category/rules/output/cancel] (write): ')).toLowerCase() || 'write';
-    if (action === 'write') return state;
-    if (action === 'cancel') return null;
-    if (action === 'name') state.name = normalizeAnswer(await env.ask('Component name: '));
-    else if (action === 'category') state.category = normalizeAnswer(await env.ask('Category: '));
-    else if (action === 'rules') {
-      if (state.sourcePath) {
-        state.rules = await chooseRulesSmart(state, {
-          cwd: env.cwd, stdout: env.stdout, ask: env.ask,
-          distRoot: options.distRoot, userRoot: options.userRoot, workspaceRoot: options.workspaceRoot
-        });
-      } else {
-        const rules = [];
-        env.stdout.write('Enter rules one per line. Submit a blank line when finished.\n');
-        while (true) {
-          const rule = await env.ask('Rule: ');
-          if (!String(rule || '').trim()) break;
-          rules.push(String(rule));
-        }
-        state.rules = rules;
-      }
-    }
-    else if (action === 'output') state.outputRoot = await chooseOutputRoot(state, env);
-    else {
-      env.stdout.write(`Unknown review action: ${action}. Use: write, name, category, rules, output, or cancel.\n`);
-    }
-  }
+  return state;
 }
 
 async function promptPresetCreation(options, env) {
@@ -272,7 +252,7 @@ async function promptPresetCreation(options, env) {
     name: normalizeAnswer(await env.ask('Preset name: ')),
     base: undefined,
     components: [],
-    outputRoot: null
+    outputRoot: options.userRoot || USER_ROOT  // presets always go to user scope (~/.ignorekit)
   };
 
   async function chooseBase() {
@@ -302,22 +282,8 @@ async function promptPresetCreation(options, env) {
 
   state.base = await chooseBase();
   state.components = await chooseComponents();
-  state.outputRoot = await chooseOutputRoot(state, env);
 
-  while (true) {
-    const outputPath = path.join(state.outputRoot, 'presets', `${state.name}.json`);
-    env.stdout.write(`\nPreset: ${state.name}\nBase: ${state.base || 'none'}\nComponents: ${state.components.length}\nOutput: ${outputPath}\n`);
-    const action = normalizeAnswer(await env.ask('Review [write/name/base/components/output/cancel] (write): ')).toLowerCase() || 'write';
-    if (action === 'write') return state;
-    if (action === 'cancel') return null;
-    if (action === 'name') state.name = normalizeAnswer(await env.ask('Preset name: '));
-    else if (action === 'base') state.base = await chooseBase();
-    else if (action === 'components') state.components = await chooseComponents();
-    else if (action === 'output') state.outputRoot = await chooseOutputRoot(state, env);
-    else {
-      env.stdout.write(`Unknown review action: ${action}. Use: write, name, base, components, output, or cancel.\n`);
-    }
-  }
+  return state;
 }
 
 module.exports = { promptComponentCreation, promptPresetCreation, selectItems, parseToggleCommand, runToggleSelection };

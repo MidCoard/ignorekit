@@ -79,24 +79,24 @@ test('create preset is the primary way to create presets', async () => {
   }
 });
 
-test('create component without arguments lets the user select source rules and review the output path', async () => {
+test('create component without arguments defaults to ./gitignore source and user scope output', async () => {
   const workspace = createTempWorkspace();
   try {
-    workspace.writeText('project/.gitignore', 'cache/\n*.log\nprivate/\n');
-    // Prompts: category, name, source, [toggle rules], output, review-action, confirm
+    workspace.writeText('.gitignore', 'cache/\n*.log\nprivate/\n');
+    // Isolated user root to avoid polluting real ~/.ignorekit
+    const fakeUserRoot = path.join(workspace.root, 'fake-user');
+    fs.mkdirSync(path.join(fakeUserRoot, 'components'), { recursive: true });
+    // Prompts: category, name, source (Enter to accept default), toggle rules done, confirm
     const answers = [
       'local',                       // category
-      'runtime',                     // name
-      workspace.path('project/.gitignore'), // source
+      'test-comp-no-args',           // name
+      '',                            // source — accept default (./gitignore)
       '',                            // toggle rules — done
-      'custom',                      // output scope
-      workspace.path('defs'),        // output dir
-      'write',                       // review action
       'y'                            // confirm
     ];
     const output = [];
 
-    const result = await runCli(['create', 'component'], {
+    const result = await runCli(['create', 'component', '--user-root', fakeUserRoot], {
       ask: () => answers.shift(),
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: () => {} },
@@ -104,30 +104,38 @@ test('create component without arguments lets the user select source rules and r
     });
 
     assert.equal(result.exitCode, 0);
-    assert.equal(fs.readFileSync(workspace.path('defs/components/local/runtime.gitignore'), 'utf8'), 'cache/\n*.log\nprivate/\n');
-    assert.match(output.join(''), /Output: .*components[\\/]local[\\/]runtime\.gitignore/);
+    const userFile = path.join(fakeUserRoot, 'components', 'local', 'test-comp-no-args.gitignore');
+    assert.ok(fs.existsSync(userFile), `Expected file at ${userFile}`);
+    assert.equal(fs.readFileSync(userFile, 'utf8'), 'cache/\n*.log\nprivate/\n');
+    assert.match(output.join(''), new RegExp(userFile.replace(/\\/g, '\\\\')));
   } finally {
     workspace.cleanup();
   }
 });
 
-test('create preset without arguments selects a base and chosen components', async () => {
+test('create preset without arguments selects a base and chosen components, writes to user scope', async () => {
   const workspace = createTempWorkspace();
   try {
     workspace.writeJson('dist/presets/vite.json', { name: 'vite', components: [] });
     workspace.writeText('dist/components/language/node.gitignore', 'node_modules/\n');
     workspace.writeText('dist/components/local/runtime.gitignore', 'runtime/\n');
+    // Create isolated user root so the test doesn't see leftover presets from real USER_ROOT
+    const fakeUserRoot = path.join(workspace.root, 'fake-user');
+    fs.mkdirSync(path.join(fakeUserRoot, 'presets'), { recursive: true });
+    fs.mkdirSync(path.join(fakeUserRoot, 'components'), { recursive: true });
+    // Prompts: name, base, components, confirm
     const answers = [
-      'team-vite',                   // name
+      'team-vite-no-args',           // name
       '1',                           // base
       '1,2',                         // components
-      'custom',                      // output scope
-      workspace.path('defs'),        // output dir
-      'write',                       // review action
       'y'                            // confirm
     ];
 
-    const result = await runCli(['create', 'preset', '--dist-root', workspace.path('dist')], {
+    const result = await runCli([
+      'create', 'preset',
+      '--dist-root', workspace.path('dist'),
+      '--user-root', fakeUserRoot
+    ], {
       ask: () => answers.shift(),
       stdout: { write: () => {} },
       stderr: { write: () => {} },
@@ -135,7 +143,9 @@ test('create preset without arguments selects a base and chosen components', asy
     });
 
     assert.equal(result.exitCode, 0);
-    const preset = JSON.parse(fs.readFileSync(workspace.path('defs/presets/team-vite.json'), 'utf8'));
+    const userFile = path.join(fakeUserRoot, 'presets', 'team-vite-no-args.json');
+    assert.ok(fs.existsSync(userFile), `Expected file at ${userFile}`);
+    const preset = JSON.parse(fs.readFileSync(userFile, 'utf8'));
     assert.equal(preset.base, 'vite');
     assert.deepEqual(preset.components, ['language/node', 'local/runtime']);
   } finally {
@@ -147,22 +157,27 @@ test('interactive component creation consumes piped terminal input across every 
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('project/.gitignore', 'cache/\n*.log\nprivate/\n');
+    const fakeUserRoot = path.join(workspace.root, 'fake-user');
+    fs.mkdirSync(path.join(fakeUserRoot, 'components'), { recursive: true });
     const cliPath = path.join(__dirname, '..', 'bin', 'ignorekit.js');
     const input = [
       'local', 'runtime', workspace.path('project/.gitignore'),
       '', // toggle rules done
-      'custom', workspace.path('defs'),
-      'write', 'y' // review, confirm
+      'y' // confirm
     ].join('\n') + '\n';
 
-    const result = childProcess.spawnSync(process.execPath, [cliPath, 'create', 'component'], {
+    const result = childProcess.spawnSync(process.execPath, [
+      cliPath, 'create', 'component', '--user-root', fakeUserRoot
+    ], {
       cwd: workspace.root,
       input,
       encoding: 'utf8'
     });
 
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(fs.readFileSync(workspace.path('defs/components/local/runtime.gitignore'), 'utf8'), 'cache/\n*.log\nprivate/\n');
+    const userFile = path.join(fakeUserRoot, 'components', 'local', 'runtime.gitignore');
+    assert.ok(fs.existsSync(userFile), `Expected file at ${userFile}`);
+    assert.equal(fs.readFileSync(userFile, 'utf8'), 'cache/\n*.log\nprivate/\n');
   } finally {
     workspace.cleanup();
   }
@@ -174,15 +189,20 @@ test('interactive preset creation consumes piped terminal input across every pro
     workspace.writeJson('dist/presets/vite.json', { name: 'vite', components: [] });
     workspace.writeText('dist/components/language/node.gitignore', 'node_modules/\n');
     workspace.writeText('dist/components/local/runtime.gitignore', 'runtime/\n');
+    // Isolated user root
+    const fakeUserRoot = path.join(workspace.root, 'fake-user');
+    fs.mkdirSync(path.join(fakeUserRoot, 'presets'), { recursive: true });
+    fs.mkdirSync(path.join(fakeUserRoot, 'components'), { recursive: true });
     const cliPath = path.join(__dirname, '..', 'bin', 'ignorekit.js');
     const input = [
-      'team-vite', '1', '1,2',
-      'custom', workspace.path('defs'),
-      'write', 'y' // review, confirm
+      'team-vite-piped', '1', '1,2',
+      'y' // confirm
     ].join('\n') + '\n';
 
     const result = childProcess.spawnSync(process.execPath, [
-      cliPath, 'create', 'preset', '--dist-root', workspace.path('dist')
+      cliPath, 'create', 'preset',
+      '--dist-root', workspace.path('dist'),
+      '--user-root', fakeUserRoot
     ], {
       cwd: workspace.root,
       input,
@@ -190,7 +210,9 @@ test('interactive preset creation consumes piped terminal input across every pro
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const preset = JSON.parse(fs.readFileSync(workspace.path('defs/presets/team-vite.json'), 'utf8'));
+    const userFile = path.join(fakeUserRoot, 'presets', 'team-vite-piped.json');
+    assert.ok(fs.existsSync(userFile), `Expected file at ${userFile}`);
+    const preset = JSON.parse(fs.readFileSync(userFile, 'utf8'));
     assert.equal(preset.base, 'vite');
     assert.deepEqual(preset.components, ['language/node', 'local/runtime']);
   } finally {
@@ -518,22 +540,21 @@ test('interactive component toggle lets user deselect individual rules', async (
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('project/.gitignore', 'cache/\n*.log\nprivate/\n');
+    const fakeUserRoot = path.join(workspace.root, 'fake-user');
+    fs.mkdirSync(path.join(fakeUserRoot, 'components'), { recursive: true });
     // No known components, so all rules are pre-selected.
     // User toggles off rule 2 (*.log), then confirms.
     const answers = [
       'local',                            // category
-      'toggletest',                       // name
+      'toggletest-user',                  // name
       workspace.path('project/.gitignore'), // source
       '2',                                // toggle: turn off *.log
       'done',                             // done
-      'custom',                           // output scope
-      workspace.path('defs'),             // output dir
-      'write',                            // review action
       'y'                                 // confirm
     ];
     const output = [];
 
-    const result = await runCli(['create', 'component'], {
+    const result = await runCli(['create', 'component', '--user-root', fakeUserRoot], {
       ask: () => answers.shift(),
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: () => {} },
@@ -541,7 +562,9 @@ test('interactive component toggle lets user deselect individual rules', async (
     });
 
     assert.equal(result.exitCode, 0);
-    const content = fs.readFileSync(workspace.path('defs/components/local/toggletest.gitignore'), 'utf8');
+    const userFile = path.join(fakeUserRoot, 'components', 'local', 'toggletest-user.gitignore');
+    assert.ok(fs.existsSync(userFile), `Expected file at ${userFile}`);
+    const content = fs.readFileSync(userFile, 'utf8');
     // *.log should be excluded after toggle
     assert.doesNotMatch(content, /\*\.log/);
     assert.match(content, /cache\//);
@@ -560,20 +583,19 @@ test('interactive component toggle pre-deselects covered rules', async () => {
     // Known component covers rule 1 (.idea/) — should be pre-deselected.
     workspace.writeText('dist/components/editor/jetbrains.gitignore', '.idea/\n');
     workspace.writeText('project/.gitignore', '.idea/\ncache/\n');
+    const fakeUserRoot = path.join(workspace.root, 'fake-user');
+    fs.mkdirSync(path.join(fakeUserRoot, 'components'), { recursive: true });
 
     const answers = [
       'local',                            // category
-      'preselect',                        // name
+      'preselect-user',                   // name
       workspace.path('project/.gitignore'), // source
       '',                                 // toggle — done (keep defaults)
-      'custom',
-      workspace.path('defs'),
-      'write',
-      'y'
+      'y'                                 // confirm
     ];
     const output = [];
 
-    const result = await runCli(['create', 'component', '--dist-root', workspace.path('dist')], {
+    const result = await runCli(['create', 'component', '--dist-root', workspace.path('dist'), '--user-root', fakeUserRoot], {
       ask: () => answers.shift(),
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: () => {} },
@@ -581,7 +603,9 @@ test('interactive component toggle pre-deselects covered rules', async () => {
     });
 
     assert.equal(result.exitCode, 0);
-    const content = fs.readFileSync(workspace.path('defs/components/local/preselect.gitignore'), 'utf8');
+    const userFile = path.join(fakeUserRoot, 'components', 'local', 'preselect-user.gitignore');
+    assert.ok(fs.existsSync(userFile), `Expected file at ${userFile}`);
+    const content = fs.readFileSync(userFile, 'utf8');
     // .idea/ should be excluded (covered by jetbrains)
     assert.doesNotMatch(content, /\.idea\//);
     assert.match(content, /cache\//);
