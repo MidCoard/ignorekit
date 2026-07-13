@@ -5,7 +5,9 @@ const path = require('path');
 const { readJson } = require('./core/json');
 const { DIST_ROOT } = require('./core/path');
 const { normalizeProjectConfig } = require('./config/project-config');
-const { createDefinitionResolver, resolvePresetChain } = require('./definitions/resolver');
+const { resolvePresetChain } = require('./definitions/resolver');
+const { buildResolver, applyUserRootDefault } = require('./cli/resolver-factory');
+const { createConfirm } = require('./cli/prompt');
 const { generateGitignore } = require('./generator');
 const { runInitWorkflow } = require('./workflows/init');
 const { runAdoptWorkflow } = require('./workflows/adopt');
@@ -274,17 +276,11 @@ Examples:
 // --- List command ---
 
 function commandList(args, env) {
-  const options = parseArgs(args);
+  const options = applyUserRootDefault(parseArgs(args));
   const target = options._[0] || 'all';
-  const distRoot = options.distRoot || DIST_ROOT;
   const stdout = env.stdout || process.stdout;
 
-  const resolver = createDefinitionResolver({
-    distRoot,
-    userRoot: options.userRoot,
-    workspaceRoot: options.workspaceRoot,
-    projectRoot: path.join(env.cwd || process.cwd(), '.ignorekit')
-  });
+  const resolver = buildResolver({ options, env });
 
   if (target === 'all' || target === 'components') {
     if (target === 'all') stdout.write('Components:\n');
@@ -320,16 +316,11 @@ function commandList(args, env) {
 
 function createResolverFromOptions(options, configPath) {
   const projectRoot = path.dirname(path.resolve(configPath));
-  return createDefinitionResolver({
-    distRoot: options.distRoot || DIST_ROOT,
-    userRoot: options.userRoot,
-    workspaceRoot: options.workspaceRoot,
-    projectRoot: path.join(projectRoot, '.ignorekit')
-  });
+  return buildResolver({ options, projectDirHint: projectRoot });
 }
 
 async function commandGenerate(args, env) {
-  const options = parseArgs(args);
+  const options = applyUserRootDefault(parseArgs(args));
   const configPath = options._[0];
   if (!configPath) {
     throw new Error('generate requires a config path');
@@ -390,12 +381,7 @@ async function pickPresetInteractive(options, env) {
   }
 
   // List all presets for the user to pick
-  const resolver = createDefinitionResolver({
-    distRoot,
-    userRoot: options.userRoot,
-    workspaceRoot: options.workspaceRoot,
-    projectRoot: path.join(projectPath, '.ignorekit')
-  });
+  const resolver = buildResolver({ options, projectDirHint: projectPath });
   const presetIds = resolver.listPresets();
   if (presetIds.length === 0) {
     stdout.write('No presets available.\n');
@@ -418,9 +404,11 @@ async function pickPresetInteractive(options, env) {
   const defaultLabel = suggestion
     ? `${suggestion}`
     : (presetIds.includes('generic') ? 'generic' : `${presetIds[0]}`);
-  // Read user input
-  const answer = await readLine(stdin, stdout,
-    `Pick a preset (name, number, or g/b) [${defaultLabel}]: `
+  // Read user input. Route through runWithQuestions so prompt reading uses a
+  // single readline lifecycle shared with the create flow.
+  const answer = await runWithQuestions(
+    { stdin, stdout, ask: env.ask },
+    ask => ask(`Pick a preset (name, number, or g/b) [${defaultLabel}]: `)
   );
 
   if (answer.trim() === '') {
@@ -448,16 +436,6 @@ async function pickPresetInteractive(options, env) {
 
   stdout.write(`Invalid selection: ${answer.trim()}\n`);
   return null;
-}
-
-function readLine(stdin, stdout, prompt) {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: stdin, output: stdout });
-    rl.question(prompt, (answer) => {
-      rl.close();
-      resolve(answer);
-    });
-  });
 }
 
 async function runWithQuestions(env, operation) {
@@ -502,39 +480,13 @@ async function runWithQuestions(env, operation) {
  */
 function buildCreateEnv(env, skipConfirm) {
   const stdout = env.stdout || process.stdout;
-  const stdin = env.stdin || process.stdin;
   const result = { stdout, cwd: env.cwd };
 
   if (skipConfirm) return result;
   if (env.confirm) { result.confirm = env.confirm; return result; }
 
-  // If test provided an ask function, use it for the confirm prompt
-  if (env.ask) {
-    result.confirm = async () => {
-      const answer = await Promise.resolve(env.ask('Proceed? [y/N/cancel] (N): '));
-      const v = String(answer || '').trim().toLowerCase();
-      if (v === 'y' || v === 'yes') return true;
-      if (v === 'cancel' || v === 'c') return false;
-      return false; // default N
-    };
-    return result;
-  }
-
-  // Check if stdin is a TTY — if not (piped/test), skip the prompt
-  const isTTY = stdin && typeof stdin.isTTY === 'boolean'
-    ? stdin.isTTY
-    : (typeof process !== 'undefined' && process.stdin && process.stdin.isTTY);
-  if (!isTTY) return result;
-
-  // Real TTY — prompt the user
-  result.confirm = () => new Promise((resolve) => {
-    const rl = readline.createInterface({ input: stdin, output: stdout });
-    rl.question('Proceed? [y/N/cancel] (N): ', (answer) => {
-      rl.close();
-      const v = String(answer || '').trim().toLowerCase();
-      resolve(v === 'y' || v === 'yes');
-    });
-  });
+  const confirm = createConfirm(env);
+  if (confirm) result.confirm = confirm;
   return result;
 }
 
@@ -571,7 +523,7 @@ async function runCli(args, env = {}) {
 
     // Explain
     if (command === 'explain') {
-      const options = parseArgs(args.slice(1));
+      const options = applyUserRootDefault(parseArgs(args.slice(1)));
       options.configPath = options._[0];
       if (!options.configPath) {
         throw new Error('explain requires a config path');
@@ -582,7 +534,7 @@ async function runCli(args, env = {}) {
 
     // Analyze
     if (command === 'analyze') {
-      const options = parseArgs(args.slice(1));
+      const options = applyUserRootDefault(parseArgs(args.slice(1)));
       options.gitignorePath = options._[0];
       if (!options.gitignorePath) {
         throw new Error('analyze requires a .gitignore path');
@@ -593,7 +545,7 @@ async function runCli(args, env = {}) {
 
     // Init
     if (command === 'init') {
-      const options = parseArgs(args.slice(1));
+      const options = applyUserRootDefault(parseArgs(args.slice(1)));
       options.projectPath = options._[0] || '.';
       if (!options.preset) {
         const picked = await pickPresetInteractive(options, { stdout, stderr, stdin: env.stdin });
@@ -618,7 +570,7 @@ async function runCli(args, env = {}) {
 
     // Adopt
     if (command === 'adopt') {
-      const options = parseArgs(args.slice(1));
+      const options = applyUserRootDefault(parseArgs(args.slice(1)));
       options.projectPath = options._[0] || '.';
       if (!options.preset) {
         const picked = await pickPresetInteractive(options, { stdout, stderr, stdin: env.stdin });
@@ -629,24 +581,9 @@ async function runCli(args, env = {}) {
       options.components = collectRepeated(args.slice(1), '--component');
       options.exclude = collectRepeated(args.slice(1), '--exclude');
       const adoptEnv = { stdout, stderr, cwd: env.cwd };
-      // adopt also benefits from confirmation when stdin is a TTY
-      if (env.ask) {
-        adoptEnv.ask = env.ask;
-        adoptEnv.confirm = async () => {
-          const a = await Promise.resolve(env.ask('Proceed? [y/N/cancel] (N): '));
-          const v = String(a || '').trim().toLowerCase();
-          return v === 'y' || v === 'yes';
-        };
-      } else if (env.stdin && env.stdin.isTTY) {
-        adoptEnv.confirm = () => new Promise((resolve) => {
-          const rl = readline.createInterface({ input: env.stdin, output: stdout });
-          rl.question('Proceed? [y/N/cancel] (N): ', (answer) => {
-            rl.close();
-            const v = String(answer || '').trim().toLowerCase();
-            resolve(v === 'y' || v === 'yes');
-          });
-        });
-      }
+      // adopt also benefits from confirmation when input is interactive.
+      const adoptConfirm = createConfirm({ stdout, stdin: env.stdin, ask: env.ask });
+      if (adoptConfirm) adoptEnv.confirm = adoptConfirm;
       const result = await runAdoptWorkflow(options, adoptEnv);
       if (result.configPath === null) {
         // user cancelled
@@ -659,7 +596,7 @@ async function runCli(args, env = {}) {
     // Create
     if (command === 'create') {
       const subcommand = args[1];
-      let options = parseArgs(args.slice(2));
+      let options = applyUserRootDefault(parseArgs(args.slice(2)));
       const createEnv = buildCreateEnv(env, options.yes);
       if (subcommand === 'component') {
         options.name = options._[0];

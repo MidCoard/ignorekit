@@ -1,9 +1,42 @@
 'use strict';
 
 const assert = require('assert');
+const path = require('path');
 const test = require('node:test');
 const { createTempWorkspace } = require('./helpers/temp-workspace');
 const { runAnalyzeWorkflow, parseSignificantLines, matchComponent, classifyMatch, scorePreset } = require('../src/workflows/analyze');
+
+test('analyze reads the source .gitignore only once', () => {
+  const workspace = createTempWorkspace();
+  const fs = require('fs');
+  const gitignorePath = workspace.path('.gitignore');
+  try {
+    workspace.writeText('dist/components/editor/jetbrains.gitignore', '# JetBrains\n.idea/\n*.iml\n');
+    workspace.writeText('.gitignore', '.idea/\n*.iml\ncustom/\n');
+
+    const origReadFileSync = fs.readFileSync;
+    let readCount = 0;
+    fs.readFileSync = function (file, ...rest) {
+      if (typeof file === 'string' && path.resolve(file) === path.resolve(gitignorePath)) {
+        readCount += 1;
+      }
+      return origReadFileSync.call(this, file, ...rest);
+    };
+
+    try {
+      runAnalyzeWorkflow(
+        { gitignorePath, distRoot: workspace.path('dist') },
+        { stdout: { write: () => {} }, cwd: workspace.root }
+      );
+    } finally {
+      fs.readFileSync = origReadFileSync;
+    }
+
+    assert.equal(readCount, 1, 'the .gitignore should be read exactly once');
+  } finally {
+    workspace.cleanup();
+  }
+});
 
 test('analyze matches components against .gitignore', () => {
   const workspace = createTempWorkspace();
@@ -222,6 +255,30 @@ test('classifyMatch thresholds work correctly', () => {
   assert.equal(classifyMatch(0.3), 'partial');
   assert.equal(classifyMatch(0.29), 'none');
   assert.equal(classifyMatch(0.0), 'none');
+});
+
+test('scorePreset penalizes only added rules, not input lines a none-match already covers', () => {
+  // A "none"-classified component (ratio 0.25) whose one matched line is already
+  // in the input. Only its 3 unmatched lines are genuinely "added"; the matched
+  // line must not be penalized because it is already present in the .gitignore.
+  const componentResults = new Map();
+  componentResults.set('noise', { matched: ['a'], unmatched: ['b', 'c', 'd'], total: 4, ratio: 0.25 });
+
+  const totalInputLines = 10;
+  const score = scorePreset(['noise'], componentResults, totalInputLines);
+
+  // Reconstruct the expected score using unmatched (3), not total (4), as the penalty.
+  const WEIGHT_NONE = 0.25;
+  const matchedLineCount = 1 * WEIGHT_NONE;
+  const inputCoverage = matchedLineCount / totalInputLines;
+  const completeness = 0; // no full matches
+  const addedRuleCount = 3; // only unmatched lines are "added"
+  const expected = Math.max(0, Math.round(
+    inputCoverage * 400 + completeness * 150 + matchedLineCount * 25 - addedRuleCount * 2
+  ));
+
+  assert.equal(score.score, expected,
+    'none-match penalty should count only unmatched (added) lines, not lines already in the input');
 });
 
 test('scorePreset weights completeness over raw count', () => {

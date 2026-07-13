@@ -96,7 +96,7 @@ test('create component without arguments defaults to ./gitignore source and user
     ];
     const output = [];
 
-    const result = await runCli(['create', 'component', '--user-root', fakeUserRoot], {
+    const result = await runCli(['create', 'component', '--user-root', fakeUserRoot, '--output-root', fakeUserRoot], {
       ask: () => answers.shift(),
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: () => {} },
@@ -134,7 +134,8 @@ test('create preset without arguments selects a base and chosen components, writ
     const result = await runCli([
       'create', 'preset',
       '--dist-root', workspace.path('dist'),
-      '--user-root', fakeUserRoot
+      '--user-root', fakeUserRoot,
+      '--output-root', fakeUserRoot
     ], {
       ask: () => answers.shift(),
       stdout: { write: () => {} },
@@ -167,7 +168,7 @@ test('interactive component creation consumes piped terminal input across every 
     ].join('\n') + '\n';
 
     const result = childProcess.spawnSync(process.execPath, [
-      cliPath, 'create', 'component', '--user-root', fakeUserRoot
+      cliPath, 'create', 'component', '--user-root', fakeUserRoot, '--output-root', fakeUserRoot
     ], {
       cwd: workspace.root,
       input,
@@ -202,7 +203,8 @@ test('interactive preset creation consumes piped terminal input across every pro
     const result = childProcess.spawnSync(process.execPath, [
       cliPath, 'create', 'preset',
       '--dist-root', workspace.path('dist'),
-      '--user-root', fakeUserRoot
+      '--user-root', fakeUserRoot,
+      '--output-root', fakeUserRoot
     ], {
       cwd: workspace.root,
       input,
@@ -215,6 +217,49 @@ test('interactive preset creation consumes piped terminal input across every pro
     const preset = JSON.parse(fs.readFileSync(userFile, 'utf8'));
     assert.equal(preset.base, 'vite');
     assert.deepEqual(preset.components, ['language/node', 'local/runtime']);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #1: --user-root is a discovery layer, not an output destination ---
+
+test('create component --user-root is used only for discovery, output defaults to USER_ROOT', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('.gitignore', 'unique-custom-rule-xyz/\n');
+    const discoveryRoot = path.join(workspace.root, 'discovery-user');
+    fs.mkdirSync(path.join(discoveryRoot, 'components'), { recursive: true });
+    // Interactive path (no name arg) — this is where outputRoot was wrongly
+    // derived from --user-root.
+    const answers = [
+      'local',                         // category
+      'user-root-output-test',         // name
+      '',                              // source — accept default (./gitignore)
+      '',                              // toggle rules — done
+      'y'                              // confirm
+    ];
+
+    const result = await runCli([
+      'create', 'component', '--user-root', discoveryRoot
+    ], {
+      ask: () => answers.shift(),
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    // --user-root must NOT be treated as the output destination.
+    const wrongPath = path.join(discoveryRoot, 'components', 'local', 'user-root-output-test.gitignore');
+    assert.equal(fs.existsSync(wrongPath), false,
+      '--user-root must not be used as the output directory');
+
+    // Output defaults to the real USER_ROOT.
+    const { USER_ROOT } = require('../src/core/path');
+    const expectedPath = path.join(USER_ROOT, 'components', 'local', 'user-root-output-test.gitignore');
+    assert.ok(fs.existsSync(expectedPath), `Expected file at ${expectedPath}`);
+    try { fs.rmSync(expectedPath, { force: true }); } catch {}
   } finally {
     workspace.cleanup();
   }
@@ -554,7 +599,7 @@ test('interactive component toggle lets user deselect individual rules', async (
     ];
     const output = [];
 
-    const result = await runCli(['create', 'component', '--user-root', fakeUserRoot], {
+    const result = await runCli(['create', 'component', '--user-root', fakeUserRoot, '--output-root', fakeUserRoot], {
       ask: () => answers.shift(),
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: () => {} },
@@ -595,7 +640,7 @@ test('interactive component toggle pre-deselects covered rules', async () => {
     ];
     const output = [];
 
-    const result = await runCli(['create', 'component', '--dist-root', workspace.path('dist'), '--user-root', fakeUserRoot], {
+    const result = await runCli(['create', 'component', '--dist-root', workspace.path('dist'), '--user-root', fakeUserRoot, '--output-root', fakeUserRoot], {
       ask: () => answers.shift(),
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: () => {} },

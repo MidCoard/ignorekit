@@ -3,9 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 const { writeJson } = require('../core/json');
-const { DIST_ROOT } = require('../core/path');
 const { buildProjectConfig } = require('../config/build-config');
-const { createDefinitionResolver } = require('../definitions/resolver');
+const { buildResolver } = require('../cli/resolver-factory');
 const { generateGitignore } = require('../generator');
 const { getGitState, ensureGitRepo } = require('../git');
 
@@ -31,12 +30,7 @@ async function runInitWorkflow(options, env) {
     }
   }
 
-  const resolver = createDefinitionResolver({
-    distRoot: options.distRoot || DIST_ROOT,
-    userRoot: options.userRoot,
-    workspaceRoot: options.workspaceRoot,
-    projectRoot: path.join(projectPath, '.ignorekit')
-  });
+  const resolver = buildResolver({ options, projectDirHint: projectPath });
   const gitignore = await generateGitignore({ config, resolver });
 
   writeJson(configPath, config);

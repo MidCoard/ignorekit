@@ -4,12 +4,13 @@ const fs = require('fs');
 const path = require('path');
 const { writeJson } = require('../core/json');
 const { DIST_ROOT } = require('../core/path');
-const { parseSignificantLines } = require('../core/text');
 const { buildProjectConfig } = require('../config/build-config');
-const { createDefinitionResolver, resolvePresetComponents } = require('../definitions/resolver');
+const { resolvePresetComponents } = require('../definitions/resolver');
+const { buildResolver } = require('../cli/resolver-factory');
 const { generateGitignore } = require('../generator');
 const { listTrackedIgnoredFiles, removeCachedFiles } = require('../git');
 const { analyzeGitignore } = require('./analyze');
+const { formatMatchedComponentsTable } = require('./_format');
 
 /**
  * Run the adopt workflow.
@@ -47,12 +48,7 @@ async function runAdoptWorkflow(options, env) {
   const warnings = [];
 
   // Create resolver once — reused throughout
-  const resolver = createDefinitionResolver({
-    distRoot,
-    userRoot: options.userRoot,
-    workspaceRoot: options.workspaceRoot,
-    projectRoot: path.join(projectPath, '.ignorekit')
-  });
+  const resolver = buildResolver({ options, projectDirHint: projectPath });
 
   // Analyze existing .gitignore if present
   let analysis = null;
@@ -69,10 +65,7 @@ async function runAdoptWorkflow(options, env) {
 
     if (analysis.displayMatchedComponents.length > 0) {
       stdout.write(`Already covered by ${analysis.displayMatchedComponents.length} known component(s):\n`);
-      for (const comp of analysis.displayMatchedComponents) {
-        const status = comp.classification === 'full' ? '✓ full' : '✗ partial';
-        stdout.write(`  ${comp.id.padEnd(24)} ${comp.matched.length}/${comp.total} rules ${status}\n`);
-      }
+      stdout.write(formatMatchedComponentsTable(analysis.displayMatchedComponents));
       stdout.write('\n');
     }
 
@@ -88,10 +81,14 @@ async function runAdoptWorkflow(options, env) {
     try {
       const presetComponents = resolvePresetComponents(resolver, options.preset);
 
-      // Find components in the preset that are NOT matched in the current .gitignore
+      // Find components in the preset that are NOT already fully present in the
+      // current .gitignore. A 'full' classification only means >=80% overlap, so a
+      // component can be classified full yet still have rules the preset would add;
+      // treat a component as already covered only when every one of its rules is
+      // present (matched.length === total).
       const newComponents = presetComponents.filter(id => {
         const match = analysis.matchedComponents.find(c => c.id === id);
-        return !match || match.classification !== 'full';
+        return !match || match.matched.length < match.total;
       });
 
       // Find matched components NOT in the chosen preset (will be lost if not in custom)
@@ -149,10 +146,11 @@ async function runAdoptWorkflow(options, env) {
       }
     }
 
-    // Deduplicate (some .gitignore files have the same rule twice).
+    // Deduplicate (some .gitignore files have the same rule twice). Reuse the
+    // lines the analysis already parsed instead of re-reading the file.
     const seen = new Set();
     const customRules = [];
-    const existingRules = parseSignificantLines(fs.readFileSync(existingGitignorePath, 'utf8'));
+    const existingRules = analysis.inputLines;
     for (const line of existingRules) {
       if (!coveredRules.has(line) && !seen.has(line)) {
         seen.add(line);

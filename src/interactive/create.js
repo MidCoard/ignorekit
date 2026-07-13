@@ -4,8 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const { USER_ROOT, DIST_ROOT } = require('../core/path');
 const { parseSignificantLines } = require('../core/text');
-const { createDefinitionResolver } = require('../definitions/resolver');
+const { buildResolver } = require('../cli/resolver-factory');
 const { analyzeGitignore } = require('../workflows/analyze');
+const { formatMatchedComponentsTable } = require('../workflows/_format');
 
 function normalizeAnswer(value) {
   return String(value || '').trim();
@@ -111,18 +112,6 @@ async function runToggleSelection(lines, initialSelected, coverageAnnotations, e
   return lines.filter((_, i) => selected.has(i));
 }
 
-async function chooseOutputRoot(state, env) {
-  const choice = normalizeAnswer(await env.ask('Output scope [user/project/workspace/custom] (user): ')).toLowerCase() || 'user';
-  if (choice === 'user') return USER_ROOT;
-  if (choice === 'project') return path.join(env.cwd, '.ignorekit');
-  if (choice === 'workspace' || choice === 'custom') {
-    const root = normalizeAnswer(await env.ask('Output directory: '));
-    if (!root) throw new Error('Output directory is required');
-    return path.resolve(env.cwd, root);
-  }
-  throw new Error(`Unknown output scope: ${choice}`);
-}
-
 /**
  * Smart rule selection. Analyzes the source file against known components,
  * shows the rules with [x]/[ ] markers (covered rules pre-deselected), and
@@ -156,10 +145,7 @@ async function chooseRulesSmart(state, env) {
   env.stdout.write(`\nAnalyzing ${path.basename(sourcePath)}...\n`);
   if (analysis.matchedComponents.length > 0) {
     env.stdout.write(`Already covered by ${analysis.matchedComponents.length} known component(s):\n`);
-    for (const comp of analysis.matchedComponents) {
-      const status = comp.classification === 'full' ? '✓ full' : '✗ partial';
-      env.stdout.write(`  ${comp.id.padEnd(24)} ${comp.matched.length}/${comp.total} rules ${status}\n`);
-    }
+    env.stdout.write(formatMatchedComponentsTable(analysis.matchedComponents));
     env.stdout.write('\n');
   }
 
@@ -193,12 +179,7 @@ async function chooseRulesSmart(state, env) {
 }
 
 async function promptComponentCreation(options, env) {
-  const resolver = createDefinitionResolver({
-    distRoot: options.distRoot || DIST_ROOT,
-    userRoot: options.userRoot,
-    workspaceRoot: options.workspaceRoot,
-    projectRoot: path.join(env.cwd, '.ignorekit')
-  });
+  const resolver = buildResolver({ options, projectDirHint: env.cwd });
   const categories = [...new Set(resolver.listComponents().map(id => id.split('/')[0]))].sort();
   writeIndexedList(env.stdout, 'Available categories', categories);
 
@@ -215,7 +196,9 @@ async function promptComponentCreation(options, env) {
     name: normalizeAnswer(await env.ask('Component name: ')),
     sourcePath: normalizeAnswer(await env.ask(sourcePrompt)) || defaultSourcePath,
     rules: [],
-    outputRoot: options.userRoot || USER_ROOT  // default to user scope
+    // --user-root is a discovery layer for analysis only; the write destination
+    // is --output-root, defaulting to the shared user definitions directory.
+    outputRoot: options.outputRoot || USER_ROOT
   };
   if (state.sourcePath) state.sourcePath = path.resolve(env.cwd, state.sourcePath);
 
@@ -240,19 +223,16 @@ async function promptComponentCreation(options, env) {
 }
 
 async function promptPresetCreation(options, env) {
-  const resolver = createDefinitionResolver({
-    distRoot: options.distRoot || DIST_ROOT,
-    userRoot: options.userRoot,
-    workspaceRoot: options.workspaceRoot,
-    projectRoot: path.join(env.cwd, '.ignorekit')
-  });
+  const resolver = buildResolver({ options, projectDirHint: env.cwd });
   const presetIds = resolver.listPresets();
   const componentIds = resolver.listComponents();
   const state = {
     name: normalizeAnswer(await env.ask('Preset name: ')),
     base: undefined,
     components: [],
-    outputRoot: options.userRoot || USER_ROOT  // presets always go to user scope (~/.ignorekit)
+    // --user-root is a discovery layer for analysis only; the write destination
+    // is --output-root, defaulting to the shared user definitions directory.
+    outputRoot: options.outputRoot || USER_ROOT
   };
 
   async function chooseBase() {

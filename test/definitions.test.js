@@ -59,7 +59,7 @@ test('resolver hasPreset returns false for missing presets', () => {
   }
 });
 
-test('resolver uses personal definitions when no user root is supplied', () => {
+test('resolver treats the user layer as opt-in when no user root is supplied', () => {
   const workspace = createTempWorkspace();
   const id = `local/test-user-default-${process.pid}`;
   const filePath = path.join(USER_ROOT, 'components', `${id}.gitignore`);
@@ -67,10 +67,26 @@ test('resolver uses personal definitions when no user root is supplied', () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, 'personal-rule/\n', 'utf8');
 
+    // The resolver constructor is pure: without an explicit userRoot it does not
+    // reach into ~/.ignorekit. The CLI supplies that default at its boundary.
     const resolver = createDefinitionResolver({ distRoot: workspace.path('dist') });
-    assert.equal(resolver.readComponent(id), 'personal-rule/\n');
+    assert.equal(resolver.hasComponent(id), false);
   } finally {
     fs.rmSync(filePath, { force: true });
+    workspace.cleanup();
+  }
+});
+
+test('resolver reads personal definitions when the user root is explicit', () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('user/components/local/personal.gitignore', 'personal-rule/\n');
+    const resolver = createDefinitionResolver({
+      distRoot: workspace.path('dist'),
+      userRoot: workspace.path('user')
+    });
+    assert.equal(resolver.readComponent('local/personal'), 'personal-rule/\n');
+  } finally {
     workspace.cleanup();
   }
 });

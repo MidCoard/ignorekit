@@ -4,9 +4,11 @@ const fs = require('fs');
 const path = require('path');
 const { readJson } = require('../core/json');
 const { parseSignificantLines } = require('../core/text');
-const { createDefinitionResolver, resolvePresetComponents } = require('../definitions/resolver');
+const { resolvePresetComponents } = require('../definitions/resolver');
+const { buildResolver } = require('../cli/resolver-factory');
 const { DIST_ROOT } = require('../core/path');
 const { detectProjectSignals } = require('../detection/project-signals');
+const { formatMatchedComponentsTable } = require('./_format');
 
 /**
  * Normalize a gitignore pattern for matching purposes.
@@ -48,6 +50,10 @@ function matchComponent(inputLines, componentContent) {
 
 const FULL_MATCH_THRESHOLD = 0.8;
 const PARTIAL_MATCH_THRESHOLD = 0.3;
+
+// Cap the source .gitignore size, matching the provider fetch guard in
+// gitignore-io.js. A real .gitignore is tiny; the cap bounds worst-case memory.
+const MAX_GITIGNORE_BYTES = 1024 * 1024;
 
 /**
  * Classify a match ratio.
@@ -102,9 +108,11 @@ function scorePreset(presetComponents, componentResults, totalInputLines = 0) {
       addedRuleCount += result.unmatched.length;
     } else {
       missCount++;
-      // Even "none" classification means some lines matched — count them
+      // Even a "none" classification means some lines matched — count them toward
+      // coverage. Only the unmatched lines are genuinely "added" noise; the matched
+      // lines are already in the input and must not be double-penalized.
       matchedLineCount += result.matched.length * WEIGHT_NONE;
-      addedRuleCount += result.total;
+      addedRuleCount += result.unmatched.length;
     }
   }
   const total = presetComponents.length;
@@ -145,17 +153,19 @@ function scorePreset(presetComponents, componentResults, totalInputLines = 0) {
 function analyzeGitignore(options) {
   const gitignorePath = path.resolve(options.gitignorePath);
   const projectPath = path.dirname(gitignorePath);
+  // Guard against pathological inputs before reading the whole file into memory.
+  // A .gitignore is a small text file; anything past 1 MiB is either a mistake or
+  // an attempt to exhaust memory, so refuse rather than buffer it.
+  const stat = fs.statSync(gitignorePath);
+  if (stat.size > MAX_GITIGNORE_BYTES) {
+    throw new Error(`.gitignore is too large to analyze (${stat.size} bytes, limit ${MAX_GITIGNORE_BYTES})`);
+  }
   const rawContent = fs.readFileSync(gitignorePath, 'utf8');
   const inputLines = parseSignificantLines(rawContent);
   const totalInputLines = inputLines.length;
 
   const distRoot = options.distRoot || DIST_ROOT;
-  const resolver = createDefinitionResolver({
-    distRoot,
-    userRoot: options.userRoot,
-    workspaceRoot: options.workspaceRoot,
-    projectRoot: path.join(projectPath, '.ignorekit')
-  });
+  const resolver = buildResolver({ options, projectDirHint: projectPath });
   const signalByPreset = new Map(
     detectProjectSignals(projectPath).map(signal => [signal.preset, signal])
   );
@@ -206,6 +216,16 @@ function analyzeGitignore(options) {
   // Compute unmatched lines (using normalized comparison)
   const unmatchedLines = inputLines.filter(line => !allMatchedNormalized.has(normalizePattern(line)));
 
+  // Unmatched lines relative to the *displayed* subset of matched components.
+  // The display filter hides low-signal partials, so a line those hidden
+  // components covered still needs to appear as unmatched to the user. Computed
+  // here from inputLines so callers never re-read the source file.
+  const displayedRules = new Set();
+  for (const component of displayMatchedComponents) {
+    for (const line of component.matched) displayedRules.add(normalizePattern(line));
+  }
+  const displayedUnmatchedLines = inputLines.filter(line => !displayedRules.has(normalizePattern(line)));
+
   // Coverage calculation (use matched count from components)
   const totalMatchedCount = matchedComponents.reduce((sum, c) => sum + c.matched.length, 0);
 
@@ -239,9 +259,11 @@ function analyzeGitignore(options) {
 
   return {
     totalLines: totalInputLines,
+    inputLines,
     matchedComponents,
     displayMatchedComponents,
     unmatchedLines,
+    displayedUnmatchedLines,
     componentResults,
     bestPreset,
     allPresets
@@ -277,29 +299,13 @@ function runAnalyzeWorkflow(options, env) {
 
   // Print matched components
   const displayMatchedComponents = analysis.displayMatchedComponents;
-  const displayedRules = new Set();
-  for (const component of displayMatchedComponents) {
-    for (const line of component.matched) displayedRules.add(normalizePattern(line));
-  }
-  const displayedUnmatchedLines = parseSignificantLines(
-    fs.readFileSync(path.resolve(cwd, options.gitignorePath), 'utf8')
-  ).filter(line => !displayedRules.has(normalizePattern(line)));
+  const displayedUnmatchedLines = analysis.displayedUnmatchedLines;
   const coveragePercent = analysis.totalLines > 0
     ? Math.round((displayMatchedComponents.reduce((sum, c) => sum + c.matched.length, 0) / analysis.totalLines) * 100)
     : 0;
 
   stdout.write(`Matched components (${coveragePercent}% coverage):\n`);
-  for (const comp of displayMatchedComponents) {
-    const status = comp.classification === 'full' ? '✓ full match' : '✗ partial';
-    const matchLabel = `${comp.matched.length}/${comp.total} rules matched`;
-    const pad = 24;
-    const idPadded = comp.id.padEnd(pad);
-    stdout.write(`  ${idPadded} ${matchLabel.padEnd(22)} ${status}`);
-    if (comp.classification === 'partial' && comp.unmatched.length > 0 && comp.unmatched.length <= 5) {
-      stdout.write(` (missing: ${comp.unmatched.join(', ')})`);
-    }
-    stdout.write('\n');
-  }
+  stdout.write(formatMatchedComponentsTable(displayMatchedComponents, { showMissing: true }));
   stdout.write('\n');
 
   // Print unmatched lines

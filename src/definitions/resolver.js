@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { listDefinitions } = require('../core/fs');
-const { assertDefinitionId, resolveInside, USER_ROOT } = require('../core/path');
+const { assertDefinitionId, resolveInside } = require('../core/path');
 
 /**
  * Compute a simple edit-distance score between two strings.
@@ -55,9 +55,13 @@ function suggestSimilar(id, candidates) {
 }
 
 function createDefinitionResolver(options = {}) {
+  // The user layer is opt-in: callers must pass an explicit userRoot to enable
+  // it. The dist CLI supplies ~/.ignorekit at the entry point (runCli) so its UX
+  // is unchanged, while library consumers and tests get a pure resolver that
+  // touches only the roots they name.
   const layers = [
     options.distRoot,
-    options.userRoot === undefined ? USER_ROOT : options.userRoot,
+    options.userRoot,
     options.workspaceRoot,
     options.projectRoot
   ].filter(Boolean);

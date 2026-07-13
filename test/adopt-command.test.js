@@ -285,6 +285,36 @@ test('adopt does not create .gitignore.preview file', async () => {
   }
 });
 
+test('adopt lists a preset component as new when the current .gitignore only partly covers it (>=80% but not all)', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    // 5-rule component: 4 present in the .gitignore → ratio 0.8 → classified 'full'
+    // even though one rule (e5) is missing and the preset WILL add it.
+    workspace.writeText('dist/components/x/near.gitignore', 'e1\ne2\ne3\ne4\ne5\n');
+    workspace.writeJson('dist/presets/p.json', { name: 'p', components: ['x/near'] });
+    workspace.writeText('project/.gitignore', 'e1\ne2\ne3\ne4\n');
+
+    const writes = [];
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'p',
+      '--dist-root', workspace.path('dist')
+    ], {
+      stdout: { write: text => writes.push(String(text)) },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    const output = writes.join('');
+    // The component is not fully present (e5 is added by the preset), so it must
+    // be surfaced as a new/added component rather than silently treated as covered.
+    assert.match(output, /will add 1 new component/);
+    assert.match(output, /x\/near/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('adopt creates .gitignore directly when none existed', async () => {
   const workspace = createTempWorkspace();
   try {

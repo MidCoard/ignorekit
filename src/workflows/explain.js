@@ -3,9 +3,9 @@
 const path = require('path');
 const { readJson } = require('../core/json');
 const { normalizeProjectConfig } = require('../config/project-config');
-const { createDefinitionResolver, resolvePresetComponents, resolvePresetChain } = require('../definitions/resolver');
+const { resolvePresetComponents, resolvePresetChain } = require('../definitions/resolver');
+const { buildResolver } = require('../cli/resolver-factory');
 const { parseSignificantLines } = require('../core/text');
-const { DIST_ROOT } = require('../core/path');
 
 /**
  * Format a brief summary of component content for the table.
@@ -46,12 +46,7 @@ function runExplainWorkflow(options, env) {
   const config = normalizeProjectConfig(rawConfig);
 
   const projectRoot = path.dirname(configPath);
-  const resolver = createDefinitionResolver({
-    distRoot: options.distRoot || DIST_ROOT,
-    userRoot: options.userRoot,
-    workspaceRoot: options.workspaceRoot,
-    projectRoot
-  });
+  const resolver = buildResolver({ options: { ...options, projectRoot } });
 
   // Resolve preset components and inheritance chain
   const presetComponents = config.preset

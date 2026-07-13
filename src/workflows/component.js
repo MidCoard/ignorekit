@@ -5,6 +5,7 @@ const path = require('path');
 const { assertDefinitionId, resolveInside, USER_ROOT } = require('../core/path');
 const { normalizeText, parseSignificantLines } = require('../core/text');
 const { analyzeGitignore } = require('./analyze');
+const { formatMatchedComponentsTable } = require('./_format');
 
 function assertSegment(value, label) {
   if (!value || typeof value !== 'string' || value.includes('/')) {
@@ -74,10 +75,7 @@ async function runComponentCreate(options, env) {
 
     if (analysis.matchedComponents.length > 0) {
       stdout.write(`Already covered by ${analysis.matchedComponents.length} known component(s):\n`);
-      for (const comp of analysis.matchedComponents) {
-        const status = comp.classification === 'full' ? '✓ full' : '✗ partial';
-        stdout.write(`  ${comp.id.padEnd(24)} ${comp.matched.length}/${comp.total} rules ${status}\n`);
-      }
+      stdout.write(formatMatchedComponentsTable(analysis.matchedComponents));
       stdout.write('\n');
     }
 

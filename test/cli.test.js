@@ -168,6 +168,34 @@ test('list rejects unknown targets', async () => {
   assert.match(errors.join(''), /Unknown list target/);
 });
 
+// --- User layer default (dist CLI UX) ---
+
+test('list surfaces personal definitions from USER_ROOT when no --user-root is passed', async () => {
+  const workspace = createListFixture();
+  const { USER_ROOT } = require('../src/core/path');
+  const componentId = `local/cli-default-${process.pid}`;
+  const componentPath = path.join(USER_ROOT, 'components', `${componentId}.gitignore`);
+  try {
+    fs.mkdirSync(path.dirname(componentPath), { recursive: true });
+    fs.writeFileSync(componentPath, 'personal/\n', 'utf8');
+
+    const writes = [];
+    const result = await runCli(['list', 'components', '--dist-root', workspace.path('dist')], {
+      stdout: { write: (text) => writes.push(String(text)) },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    // The CLI defaults the opt-in user layer to ~/.ignorekit, preserving the
+    // "personal definitions apply everywhere" behavior.
+    assert.match(writes.join(''), new RegExp(componentId.replace(/\//g, '\\/')));
+  } finally {
+    fs.rmSync(componentPath, { force: true });
+    workspace.cleanup();
+  }
+});
+
 // --- Wrapper error handling ---
 
 test('wrapper reports rejected runCli errors without stack traces', () => {
