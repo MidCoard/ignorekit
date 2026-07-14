@@ -5,7 +5,7 @@ const path = require('path');
 const { assertDefinitionId, resolveInside, USER_ROOT } = require('../core/path');
 const { normalizeText, parseSignificantLines } = require('../core/text');
 const { analyzeGitignore } = require('./analyze');
-const { formatMatchedComponentsTable } = require('./_format');
+const { writeMatchedComponentsBlock } = require('./_format');
 
 function assertSegment(value, label) {
   if (!value || typeof value !== 'string' || value.includes('/')) {
@@ -88,9 +88,7 @@ async function runComponentCreate(options, env) {
     stdout.write(`Analyzing ${path.basename(sourcePath)} before extraction...\n\n`);
 
     if (analysis.matchedComponents.length > 0) {
-      stdout.write(`Already covered by ${analysis.matchedComponents.length} known component(s):\n`);
-      stdout.write(formatMatchedComponentsTable(analysis.matchedComponents));
-      stdout.write('\n');
+      writeMatchedComponentsBlock(analysis.matchedComponents, { stdout });
     }
 
     rules = analysis.unmatchedLines;

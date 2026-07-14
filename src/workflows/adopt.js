@@ -10,7 +10,7 @@ const { buildResolver } = require('../cli/resolver-factory');
 const { generateGitignore } = require('../generator');
 const { listTrackedIgnoredFiles, removeCachedFiles } = require('../git');
 const { analyzeGitignore } = require('./analyze');
-const { formatMatchedComponentsTable } = require('./_format');
+const { writeMatchedComponentsBlock } = require('./_format');
 const { debugError } = require('../core/debug');
 
 /**
@@ -48,6 +48,16 @@ async function runAdoptWorkflow(options, env) {
   const distRoot = options.distRoot || DIST_ROOT;
   const warnings = [];
 
+  // Overwrite-guard fires BEFORE any analysis or preview. A user who already
+  // has an ignorekit.json on disk should learn "config exists" first; running
+  // the analysis (which reads + matches their .gitignore, then prints "Rules
+  // needing review" and "Preset will add N components") only to throw on a
+  // config check at the end is wasted work and produces misleading output.
+  const configPath = path.join(projectPath, 'ignorekit.json');
+  if (fs.existsSync(configPath) && !options.overwriteConfig) {
+    throw new Error(`Config already exists: ${configPath}. Use --overwrite-config to replace.`);
+  }
+
   // Create resolver once — reused throughout
   const resolver = buildResolver({ options, projectDirHint: projectPath });
 
@@ -69,9 +79,7 @@ async function runAdoptWorkflow(options, env) {
     stdout.write('Analyzing existing .gitignore...\n\n');
 
     if (analysis.displayMatchedComponents.length > 0) {
-      stdout.write(`Already covered by ${analysis.displayMatchedComponents.length} known component(s):\n`);
-      stdout.write(formatMatchedComponentsTable(analysis.displayMatchedComponents));
-      stdout.write('\n');
+      writeMatchedComponentsBlock(analysis.displayMatchedComponents, { stdout });
     }
 
     if (analysis.unmatchedLines.length > 0) {
@@ -168,11 +176,6 @@ async function runAdoptWorkflow(options, env) {
       }
     }
     config.custom = customRules;
-  }
-
-  const configPath = path.join(projectPath, 'ignorekit.json');
-  if (fs.existsSync(configPath) && !options.overwriteConfig) {
-    throw new Error(`Config already exists: ${configPath}. Use --overwrite-config to replace.`);
   }
 
   // Generate .gitignore

@@ -12,7 +12,12 @@ const presetsDir = path.join(repoRoot, 'presets');
 const { listDefinitions: listDefinitionsArray } = require('../src/core/fs');
 
 const workflows = new Set(['init', 'adopt', 'generate']);
-const addonTypes = new Set(['ensureDirectory', 'ensureGitRepo', 'removeCachedIgnoredFiles']);
+// v0.6.4 implements only one addon: ensureGitRepo, used by init/adopt to
+// ensure the target is a Git repo. Other names from earlier drafts
+// (`ensureDirectory`, `removeCachedIgnoredFiles`) were dropped — directory
+// creation is unconditional and cached-file removal is exposed via the
+// `--remove-cached` flag rather than a typed addon block.
+const addonTypes = new Set(['ensureGitRepo']);
 const providerNames = new Set(['local', 'gitignore.io']);
 
 main();
@@ -178,10 +183,6 @@ function validateAddons(data, label, errors) {
 
     if (addon.type === 'ensureGitRepo' && !['init', 'adopt'].includes(data.workflow)) {
       errors.push(`${label}: ensureGitRepo only applies to init/adopt`);
-    }
-
-    if (addon.type === 'removeCachedIgnoredFiles' && data.workflow !== 'adopt') {
-      errors.push(`${label}: removeCachedIgnoredFiles only applies to adopt`);
     }
   }
 }

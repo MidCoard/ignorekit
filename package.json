@@ -32,9 +32,9 @@
   "scripts": {
     "list": "node bin/ignorekit.js list",
     "validate:situations": "node scripts/validate-situations.js",
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/*.test.js && npm run validate:situations",
     "test:unit": "node --test test/*.test.js",
-    "prepublishOnly": "npm run test:unit"
+    "prepublishOnly": "npm run test:unit && npm run validate:situations"
   },
   "engines": {
     "node": ">=18"

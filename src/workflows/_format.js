@@ -35,4 +35,47 @@ function formatMatchedComponentsTable(components, { showMissing = false } = {}) 
   return out;
 }
 
-module.exports = { formatMatchedComponentsTable, ID_PAD, MATCH_LABEL_PAD, MAX_MISSING_TO_LIST };
+/**
+ * Build the "Already covered by N known component(s)" block as a string.
+ * Same wording and spacing as writeMatchedComponentsBlock; returns the
+ * formatted string so callers can compose it with other output (e.g. a
+ * preceding "Analyzing ..." line).
+ *
+ * @param {object[]} components - Matched components to display
+ * @param {object} [opts]
+ * @param {string} [opts.label='Already covered by'] - Header prefix
+ * @returns {string}
+ */
+function formatMatchedComponentsHeader(components, { label = 'Already covered by' } = {}) {
+  if (!components || components.length === 0) return '';
+  return `${label} ${components.length} known component(s):\n${formatMatchedComponentsTable(components)}\n`;
+}
+
+/**
+ * Write the "Already covered by N known component(s)" block (header + table +
+ * trailing blank line) to a writable stream. When the list is empty, writes
+ * nothing — callers don't have to guard the count themselves.
+ *
+ * Shared by adopt, create component, and the interactive create flow so the
+ * exact wording and spacing stays consistent across all three entry points.
+ *
+ * @param {object[]} components - Matched components to display
+ * @param {object} [opts]
+ * @param {object} [opts.stdout=process.stdout] - Writable stream
+ * @param {string} [opts.label='Already covered by'] - Header prefix
+ */
+function writeMatchedComponentsBlock(components, { stdout = process.stdout, label = 'Already covered by' } = {}) {
+  if (!components || components.length === 0) return;
+  stdout.write(`${label} ${components.length} known component(s):\n`);
+  stdout.write(formatMatchedComponentsTable(components));
+  stdout.write('\n');
+}
+
+module.exports = {
+  formatMatchedComponentsTable,
+  formatMatchedComponentsHeader,
+  writeMatchedComponentsBlock,
+  ID_PAD,
+  MATCH_LABEL_PAD,
+  MAX_MISSING_TO_LIST
+};

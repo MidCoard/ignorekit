@@ -116,6 +116,69 @@ test('adopt refuses to overwrite existing config without --overwrite-config', as
   }
 });
 
+test('adopt fails before analysis/preview when config exists without --overwrite-config', async () => {
+  // The overwrite-guard must fire BEFORE the analysis step. Otherwise a user
+  // who already has a config in place sees "Rules needing review" output and
+  // a "Preset will add N components" preview before learning their config
+  // blocks the write entirely. Verify (a) no analysis output is printed,
+  // (b) no confirm prompt is issued even when env.ask would drive one,
+  // (c) exit code 1, (d) the original config is byte-identical, and
+  // (e) no .gitignore.bak file was created.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    const existingConfig = { version: 1, name: 'existing', components: ['local/logs'] };
+    workspace.writeJson('project/ignorekit.json', existingConfig);
+    const originalConfigBytes = fs.readFileSync(workspace.path('project/ignorekit.json'), 'utf8');
+    workspace.writeText('project/.gitignore', 'old-rule\n');
+    const originalGitignoreBytes = fs.readFileSync(workspace.path('project/.gitignore'), 'utf8');
+
+    let askCalled = false;
+    const stdoutLines = [];
+    const stderrLines = [];
+    const result = await runCli([
+      'adopt',
+      workspace.path('project'),
+      '--preset',
+      'demo',
+      '--dist-root',
+      workspace.path('dist')
+    ], {
+      // Drive any confirm prompt with a "yes" answer. If the guard fires
+      // BEFORE the confirm, ask() must never be called.
+      ask: () => { askCalled = true; return 'y'; },
+      stdin: { isTTY: true },
+      stdout: { write: (text) => stdoutLines.push(String(text)) },
+      stderr: { write: (text) => stderrLines.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 1, `expected exit 1; stderr: ${stderrLines.join('')}`);
+    // Guard must fire BEFORE analysis — no "Rules needing review" or
+    // "Preset will add" output should appear.
+    const out = stdoutLines.join('');
+    assert.doesNotMatch(out, /Rules needing review/,
+      'adopt must not print analysis output when the config-overwrite guard will reject');
+    assert.doesNotMatch(out, /Preset "demo" will add/,
+      'adopt must not print preset-vs-analysis output when the config-overwrite guard will reject');
+    assert.doesNotMatch(out, /--- Preview ---/,
+      'adopt must not show a preview when the config-overwrite guard will reject');
+    assert.equal(askCalled, false,
+      'adopt must not issue the confirm prompt when the config-overwrite guard will reject');
+    // Guard must prevent any bak-file creation.
+    assert.equal(fs.existsSync(workspace.path('project/.gitignore.bak')), false,
+      'adopt must not create .gitignore.bak when config guard rejects early');
+    // Original config + .gitignore must be byte-identical — no partial writes.
+    assert.equal(fs.readFileSync(workspace.path('project/ignorekit.json'), 'utf8'), originalConfigBytes,
+      'existing config must be unchanged when adopt refuses to overwrite');
+    assert.equal(fs.readFileSync(workspace.path('project/.gitignore'), 'utf8'), originalGitignoreBytes,
+      'existing .gitignore must be unchanged when adopt refuses to overwrite');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('adopt with --overwrite-config replaces existing config', async () => {
   const workspace = createTempWorkspace();
   try {

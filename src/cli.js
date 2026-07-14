@@ -506,6 +506,25 @@ async function pickPresetInteractive(options, env) {
   return null;
 }
 
+/**
+ * Drive an interactive question/answer flow.
+ *
+ * Precedence (highest to lowest) — any higher-priority signal short-circuits
+ * the lower ones:
+ *   1. `env.ask` — a test or parent-supplied ask function drives every
+ *      prompt synchronously. This is the only signal honored under
+ *      IGNOREKIT_NONINTERACTIVE / CI, so tests can exercise prompt paths
+ *      regardless of CI mode.
+ *   2. `IGNOREKIT_NONINTERACTIVE` / `CI` — refuse to open readline at all;
+ *      every ask() resolves with null and the caller decides what to do.
+ *   3. `stdin.isTTY === false` (piped input) — drain the stream into a
+ *      line buffer and serve the buffered lines one-per-ask.
+ *   4. Real TTY — full readline interaction with queued-line buffering.
+ *
+ * @param {object} env - { stdin, stdout, stderr, ask }
+ * @param {(ask: (prompt: string) => Promise<string|null>) => Promise<T>} operation
+ * @returns {Promise<T>}
+ */
 async function runWithQuestions(env, operation) {
   if (env.ask) {
     return operation(prompt => Promise.resolve(env.ask(prompt)));

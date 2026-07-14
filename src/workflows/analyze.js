@@ -157,11 +157,23 @@ function analyzeGitignore(options) {
   // Guard against pathological inputs before reading the whole file into memory.
   // A .gitignore is a small text file; anything past 1 MiB is either a mistake or
   // an attempt to exhaust memory, so refuse rather than buffer it.
-  const stat = fs.statSync(gitignorePath);
-  if (stat.size > MAX_GITIGNORE_BYTES) {
-    throw new Error(`.gitignore is too large to analyze (${stat.size} bytes, limit ${MAX_GITIGNORE_BYTES})`);
+  // Callers that already read the source (e.g. chooseRulesSmart) may pass
+  // `options.content` to skip the disk read; the size guard still applies so
+  // pathological inputs are rejected even when the content is supplied
+  // in-memory.
+  let rawContent;
+  if (typeof options.content === 'string') {
+    if (options.content.length > MAX_GITIGNORE_BYTES) {
+      throw new Error(`.gitignore is too large to analyze (${options.content.length} bytes, limit ${MAX_GITIGNORE_BYTES})`);
+    }
+    rawContent = options.content;
+  } else {
+    const stat = fs.statSync(gitignorePath);
+    if (stat.size > MAX_GITIGNORE_BYTES) {
+      throw new Error(`.gitignore is too large to analyze (${stat.size} bytes, limit ${MAX_GITIGNORE_BYTES})`);
+    }
+    rawContent = fs.readFileSync(gitignorePath, 'utf8');
   }
-  const rawContent = fs.readFileSync(gitignorePath, 'utf8');
   // Analyze uses the trimmed form for matching; originalLines preserves the
   // user's actual byte text so callers (adopt) can carry forward rules with
   // their original whitespace and quoting intact.

@@ -50,11 +50,19 @@ function interpretConfirm(answer) {
  * Build a confirm() callback for a workflow env, or return null when no prompt
  * should be shown (non-interactive input).
  *
- * Resolution order, matching how the CLI wires input:
- * 1. A test-provided ask() function drives the prompt synchronously.
- * 2. A real TTY prompts the user via readline.
- * 3. Piped/non-TTY input or CI/non-interactive environments skip
- *    confirmation entirely (returns null).
+ * Precedence (highest to lowest), kept in lock-step with `runWithQuestions`
+ * in src/cli.js so a single rule decides "should we open readline?" across
+ * the whole CLI:
+ *   1. `env.ask` — drives every prompt via the supplied ask function. This
+ *      is the only signal honored under IGNOREKIT_NONINTERACTIVE / CI, so
+ *      tests can exercise prompt paths in any environment.
+ *   2. `isInteractive()` — checks `IGNOREKIT_NONINTERACTIVE` / `CI` and
+ *      `stdin.isTTY`. False → return null (the workflow handles the no-confirm
+ *      case by either using --yes or refusing to proceed).
+ *   3. Real TTY — opens readline and asks the user.
+ *
+ * Note: when a test sets `env.ask` AND `CI=1`, `env.ask` wins. That's the
+ * intended contract; tests deliberately bypass CI to exercise the prompt path.
  *
  * @param {object} env - { stdout, stdin, ask }
  * @param {object} [opts]
@@ -65,6 +73,8 @@ function createConfirm(env, { prompt = DEFAULT_PROMPT } = {}) {
   const stdout = env.stdout || process.stdout;
   const stdin = env.stdin || process.stdin;
 
+  // env.ask short-circuits BEFORE isInteractive() — by design, so a test can
+  // drive the prompt under CI without rewriting the prompt logic.
   if (env.ask) {
     return async () => interpretConfirm(await Promise.resolve(env.ask(prompt)));
   }

@@ -6,7 +6,8 @@ const { USER_ROOT, DIST_ROOT } = require('../core/path');
 const { parseSignificantLines } = require('../core/text');
 const { buildResolver } = require('../cli/resolver-factory');
 const { analyzeGitignore } = require('../workflows/analyze');
-const { formatMatchedComponentsTable } = require('../workflows/_format');
+const { formatMatchedComponentsHeader } = require('../workflows/_format');
+const { debugError } = require('../core/debug');
 
 function normalizeAnswer(value) {
   return String(value || '').trim();
@@ -117,15 +118,22 @@ async function runToggleSelection(lines, initialSelected, coverageAnnotations, e
  * shows the rules with [x]/[ ] markers (covered rules pre-deselected), and
  * lets the user toggle individual rules before confirming.
  *
+ * Returns null when analysis cannot run (e.g. a > 1 MiB .gitignore is rejected
+ * by analyzeGitignore's size guard). The caller falls back to inline rule
+ * entry in that case so a single oversized file can't break the entire
+ * interactive `create component` flow.
+ *
  * @param {object} state - { sourcePath, rules, outputRoot }
  * @param {object} env - { cwd, stdout, ask, distRoot, userRoot, workspaceRoot }
- * @returns {Promise<string[]>} Final rule lines
+ * @returns {Promise<string[]|null>} Final rule lines, or null to signal fallback
  */
 async function chooseRulesSmart(state, env) {
   const sourcePath = state.sourcePath;
   let lines;
+  let rawContent;
   try {
-    lines = parseSignificantLines(fs.readFileSync(sourcePath, 'utf8'));
+    rawContent = fs.readFileSync(sourcePath, 'utf8');
+    lines = parseSignificantLines(rawContent);
   } catch (err) {
     throw new Error(`Cannot read source file ${sourcePath}: ${err.message}`);
   }
@@ -134,19 +142,33 @@ async function chooseRulesSmart(state, env) {
     return [];
   }
 
-  // Run smart analysis to mark covered rules
-  const analysis = analyzeGitignore({
-    gitignorePath: sourcePath,
-    distRoot: env.distRoot || DIST_ROOT,
-    userRoot: env.userRoot,
-    workspaceRoot: env.workspaceRoot
-  });
+  // Run smart analysis to mark covered rules. Failure here (commonly a
+  // .gitignore past analyzeGitignore's 1 MiB guard) shouldn't break the
+  // interactive flow — the user can still enter rules inline. Surface the
+  // error to stderr under IGNOREKIT_DEBUG and signal the caller to fall back.
+  let analysis;
+  try {
+    analysis = analyzeGitignore({
+      gitignorePath: sourcePath,
+      distRoot: env.distRoot || DIST_ROOT,
+      userRoot: env.userRoot,
+      workspaceRoot: env.workspaceRoot,
+      // Pass the already-read content so analyzeGitignore doesn't re-read the
+      // file we just parsed above (avoids a redundant disk hit and keeps the
+      // single read site consistent with what the user sees on stdout).
+      content: rawContent
+    });
+  } catch (err) {
+    const stderr = env.stderr || process.stderr;
+    stderr.write(`Could not analyze ${path.basename(sourcePath)}: ${err.message}\n`);
+    stderr.write(`Falling back to inline rule entry.\n`);
+    debugError(err, 'choose-rules-smart.analyze');
+    return null;
+  }
 
   env.stdout.write(`\nAnalyzing ${path.basename(sourcePath)}...\n`);
   if (analysis.matchedComponents.length > 0) {
-    env.stdout.write(`Already covered by ${analysis.matchedComponents.length} known component(s):\n`);
-    env.stdout.write(formatMatchedComponentsTable(analysis.matchedComponents));
-    env.stdout.write('\n');
+    env.stdout.write(formatMatchedComponentsHeader(analysis.matchedComponents));
   }
 
   // Build coverage annotations and pre-selection
@@ -204,22 +226,39 @@ async function promptComponentCreation(options, env) {
 
   // If there's a source file, use smart selection. Otherwise inline rules.
   if (state.sourcePath) {
-    state.rules = await chooseRulesSmart(state, {
-      cwd: env.cwd, stdout: env.stdout, ask: env.ask,
+    const smartRules = await chooseRulesSmart(state, {
+      cwd: env.cwd, stdout: env.stdout, stderr: env.stderr, ask: env.ask,
       distRoot: options.distRoot, userRoot: options.userRoot, workspaceRoot: options.workspaceRoot
     });
-  } else {
-    const rules = [];
-    env.stdout.write('Enter rules one per line. Submit a blank line when finished.\n');
-    while (true) {
-      const rule = await env.ask('Rule: ');
-      if (!String(rule || '').trim()) break;
-      rules.push(String(rule));
+    // chooseRulesSmart returns null when analysis failed (e.g. oversized
+    // .gitignore). In that case drop to inline rule entry so the interactive
+    // flow can still produce a component.
+    if (smartRules === null) {
+      state.rules = await promptInlineRules(env);
+    } else {
+      state.rules = smartRules;
     }
-    state.rules = rules;
+  } else {
+    state.rules = await promptInlineRules(env);
   }
 
   return state;
+}
+
+/**
+ * Inline rule entry — the user types rules one per line, blank line ends.
+ * Used both when the user provides no source file and when chooseRulesSmart
+ * falls back after a failed analysis.
+ */
+async function promptInlineRules(env) {
+  const rules = [];
+  env.stdout.write('Enter rules one per line. Submit a blank line when finished.\n');
+  while (true) {
+    const rule = await env.ask('Rule: ');
+    if (!String(rule || '').trim()) break;
+    rules.push(String(rule));
+  }
+  return rules;
 }
 
 async function promptPresetCreation(options, env) {
