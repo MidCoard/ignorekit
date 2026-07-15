@@ -239,3 +239,114 @@ test('explain shows excluded components and filters them from output', () => {
     workspace.cleanup();
   }
 });
+
+test('explain resolves project-layer definitions from .ignorekit subdirectory', () => {
+  const workspace = createTempWorkspace();
+  try {
+    // Dist has a preset but no project-specific component
+    workspace.writeJson('dist/presets/demo.json', {
+      name: 'demo',
+      components: ['local/logs']
+    });
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    // Project layer: a custom component inside .ignorekit/
+    workspace.writeText('project/.ignorekit/components/local/project-only.gitignore', 'project-only/\n');
+    workspace.writeJson('project/ignorekit.json', {
+      version: 1,
+      name: 'project-test',
+      preset: 'demo',
+      provider: { name: 'local' },
+      components: ['local/project-only'],
+      custom: [],
+      addons: {}
+    });
+
+    let output = '';
+    const stdout = { write: (s) => { output += s; } };
+
+    const result = runExplainWorkflow(
+      { configPath: workspace.path('project/ignorekit.json'), distRoot: workspace.path('dist') },
+      { stdout, cwd: workspace.root }
+    );
+
+    // The project-layer component must be resolved — if projectRoot pointed at
+    // the project directory instead of .ignorekit, the resolver would not find
+    // local/project-only and would throw "Unknown component".
+    assert.equal(result.components.length, 2);
+    assert.match(output, /local\/project-only/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('explain skips missing preset component instead of crashing', () => {
+  const workspace = createTempWorkspace();
+  try {
+    // Preset references a component that does not exist on disk.
+    // The explain workflow must skip it gracefully rather than throwing
+    // DefinitionNotFoundError.
+    workspace.writeJson('dist/presets/demo.json', {
+      name: 'demo',
+      components: ['local/missing']
+    });
+    workspace.writeJson('ignorekit.json', {
+      version: 1,
+      name: 'missing-component-project',
+      preset: 'demo',
+      provider: { name: 'local' },
+      components: [],
+      custom: [],
+      addons: {}
+    });
+
+    let output = '';
+    const stdout = { write: (s) => { output += s; } };
+
+    // Must not throw — missing component is skipped
+    const result = runExplainWorkflow(
+      { configPath: workspace.path('ignorekit.json'), distRoot: workspace.path('dist') },
+      { stdout, cwd: workspace.root }
+    );
+
+    assert.equal(result.project, 'missing-component-project');
+    assert.equal(result.preset, 'demo');
+    // The missing component should not appear in the component list
+    assert.ok(!result.components.includes('local/missing'));
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('explain skips missing extra component instead of crashing', () => {
+  const workspace = createTempWorkspace();
+  try {
+    // Config references an extra component that does not exist on disk.
+    workspace.writeJson('dist/presets/demo.json', {
+      name: 'demo',
+      components: []
+    });
+    workspace.writeJson('ignorekit.json', {
+      version: 1,
+      name: 'missing-extra-project',
+      preset: 'demo',
+      provider: { name: 'local' },
+      components: ['local/nonexistent'],
+      custom: [],
+      addons: {}
+    });
+
+    let output = '';
+    const stdout = { write: (s) => { output += s; } };
+
+    // Must not throw — missing extra component is skipped
+    const result = runExplainWorkflow(
+      { configPath: workspace.path('ignorekit.json'), distRoot: workspace.path('dist') },
+      { stdout, cwd: workspace.root }
+    );
+
+    assert.equal(result.project, 'missing-extra-project');
+    assert.ok(!result.components.includes('local/nonexistent'));
+  } finally {
+    workspace.cleanup();
+  }
+});

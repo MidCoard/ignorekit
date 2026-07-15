@@ -75,15 +75,29 @@ async function runComponentCreate(options, env) {
   const warnings = [];
   let analysis = null;
 
-  // Smart extraction: --from with no explicit --rule → analyze + take unmatched lines
+  // Smart extraction: --from with no explicit --rule → analyze + take unmatched lines.
+  // The analysis can fail for pathological inputs (e.g. a .gitignore past the
+  // 1 MiB size guard). When that happens, the component cannot be extracted
+  // automatically — surface the error so the user can use --rule instead.
   if (options.from && rules.length === 0) {
     const sourcePath = path.resolve(env.cwd || process.cwd(), options.from);
-    analysis = analyzeGitignore({
-      gitignorePath: sourcePath,
-      distRoot: options.distRoot,
-      userRoot: options.userRoot,
-      workspaceRoot: options.workspaceRoot
-    });
+    try {
+      analysis = analyzeGitignore({
+        gitignorePath: sourcePath,
+        distRoot: options.distRoot,
+        userRoot: options.userRoot,
+        workspaceRoot: options.workspaceRoot,
+        // The source .gitignore may be outside the project root (e.g. --from
+        // pointing to an arbitrary file). Signal detection must run against the
+        // actual project directory, not the directory containing the source file.
+        projectPath: env.cwd || process.cwd()
+      }, { stderr });
+    } catch (err) {
+      stderr.write(`Could not analyze ${path.basename(sourcePath)}: ${err.message}\n`);
+      stderr.write('Use --rule to specify rules explicitly, or use a smaller source file.\n');
+      debugError(err, 'component.analyze', { stderr });
+      throw new Error(`Cannot analyze source file: ${err.message}`);
+    }
 
     stdout.write(`Analyzing ${path.basename(sourcePath)} before extraction...\n\n`);
 

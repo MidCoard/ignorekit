@@ -2,16 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { debugError } = require('../core/debug');
-
-function readJsonIfPresent(filePath) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch (err) {
-    debugError(err, 'project-signals.readJson');
-    return null;
-  }
-}
+const { readJsonOrNull } = require('../core/json');
 
 function packageNames(packageJson) {
   return new Set([
@@ -25,9 +16,39 @@ function packageScripts(packageJson) {
   return Object.values(packageJson.scripts || {}).join('\n');
 }
 
-function detectProjectSignals(projectPath) {
+/**
+ * Detect project-type signals from manifest files and build configurations.
+ *
+ * Returns an array of { preset, evidence, strength } objects. Each signal
+ * suggests a preset that matches the project's detected technology stack.
+ *
+ * Priority contract for package.json framework detection:
+ * The `else if` chain is intentional — when a project has multiple framework
+ * dependencies (e.g. both `next` and `vite`), only the highest-priority
+ * framework signal is emitted. This prevents a single project from generating
+ * conflicting preset suggestions that would distort scoring. The priority
+ * order is: next > nuxt > sveltekit > angular > vite > generic-node.
+ * Frameworks lower in the chain are typically dependencies of those higher
+ * (e.g. Vite is a dev dependency of Nuxt and SvelteKit), so the more
+ * specific framework must win. If independent signals are needed (e.g. a
+ * monorepo with both a Next.js app and a Vite library), the caller should
+ * inspect package.json directly rather than relying on this heuristic.
+ *
+ * Non-package.json signals (Gradle, Maven, Python, Rust, Go, PHP) are
+ * independent — each manifest file emits its own signal because a project
+ * can legitimately have multiple language stacks (e.g. a Java backend with
+ * a Python build script).
+ *
+ * @param {string} projectPath - Root directory of the project to scan
+ * @param {object} [env] - Environment streams
+ * @param {object} [env.stderr] - Writable stream for warnings (default: process.stderr)
+ * @returns {{ preset: string, evidence: string, strength: number }[]}
+ */
+function detectProjectSignals(projectPath, env) {
+  const stderr = (env && env.stderr) || process.stderr;
   const signals = [];
-  const packageJson = readJsonIfPresent(path.join(projectPath, 'package.json'));
+  const packageJsonPath = path.join(projectPath, 'package.json');
+  const packageJson = readJsonOrNull(packageJsonPath, env);
 
   if (packageJson) {
     const names = packageNames(packageJson);
@@ -45,6 +66,16 @@ function detectProjectSignals(projectPath) {
     } else {
       signals.push({ preset: 'node', evidence: 'Node.js package detected', strength: 400 });
     }
+  } else if (fs.existsSync(packageJsonPath)) {
+    // package.json exists but readJsonOrNull returned null — the file is
+    // present but unreadable (EACCES) or contains invalid JSON. The caller
+    // will not detect any Node.js framework signals, which is a silent
+    // misconfiguration. Surface a warning so the user can diagnose the
+    // permission issue or corrupt file.
+    stderr.write(
+      `[ignorekit] Warning: ${packageJsonPath} exists but could not be read. ` +
+      'Check file permissions and JSON syntax. Set IGNOREKIT_DEBUG=1 for details.\n'
+    );
   }
 
   if (fs.existsSync(path.join(projectPath, 'build.gradle')) || fs.existsSync(path.join(projectPath, 'build.gradle.kts'))) {

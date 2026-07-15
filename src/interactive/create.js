@@ -3,14 +3,42 @@
 const fs = require('fs');
 const path = require('path');
 const { USER_ROOT, DIST_ROOT } = require('../core/path');
-const { parseSignificantLines } = require('../core/text');
-const { buildResolver } = require('../cli/resolver-factory');
+const { parseSignificantLines, normalizePattern } = require('../core/text');
+const { buildResolver } = require('../core/resolver-factory');
 const { analyzeGitignore } = require('../workflows/analyze');
 const { formatMatchedComponentsHeader } = require('../workflows/_format');
 const { debugError } = require('../core/debug');
 
 function normalizeAnswer(value) {
-  return String(value || '').trim();
+  return String(value == null ? '' : value).trim();
+}
+
+/**
+ * Parse a comma-separated list of number ranges (e.g. "1-3,5") into 0-based
+ * indices. Each token is either a single number ("3") or a range ("1-3").
+ * Returns null if any token is out of bounds or not a valid integer.
+ * @param {string} input - Raw user input (already lowercased and trimmed by caller)
+ * @param {number} max - Maximum valid 1-based index (items.length or total)
+ * @returns {number[]|null} Array of 0-based indices, or null on invalid input
+ */
+function parseNumberRanges(input, max) {
+  const indices = [];
+  for (const token of input.split(',')) {
+    const parts = token.trim().split('-', 2);
+    // Reject malformed tokens like "1--3" (splits to ["1", ""]), "1-" (splits
+    // to ["1", ""]), or "-" (splits to ["", ""]). A valid token is either a
+    // single number ("3") or a range with two non-empty parts ("1-3").
+    if (parts.length === 2 && parts[1] === '') return null;
+    if (parts[0] === '') return null;
+    const [startText, endText] = parts;
+    const start = Number(startText);
+    const end = endText ? Number(endText) : start;
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start || end > max) {
+      return null;
+    }
+    for (let i = start; i <= end; i += 1) indices.push(i - 1);
+  }
+  return indices;
 }
 
 /**
@@ -26,16 +54,9 @@ function selectItems(items, answer, defaultItems = []) {
   if (input === '') return [...defaultItems];
   if (input === 'all') return [...items];
 
-  const selected = new Set();
-  for (const token of input.split(',')) {
-    const [startText, endText] = token.trim().split('-', 2);
-    const start = Number(startText);
-    const end = endText ? Number(endText) : start;
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start || end > items.length) {
-      return null;
-    }
-    for (let index = start; index <= end; index += 1) selected.add(index - 1);
-  }
+  const indices = parseNumberRanges(input, items.length);
+  if (indices === null) return null;
+  const selected = new Set(indices);
   return [...selected].sort((a, b) => a - b).map(index => items[index]);
 }
 
@@ -69,17 +90,7 @@ function parseToggleCommand(input, total) {
   if (v === '') return []; // empty = no toggles this round
   if (v === 'all') return Array.from({ length: total }, (_, i) => i);
   if (v === 'none') return [];
-  const result = [];
-  for (const token of v.split(',')) {
-    const [startText, endText] = token.trim().split('-', 2);
-    const start = Number(startText);
-    const end = endText ? Number(endText) : start;
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start || end > total) {
-      return null;
-    }
-    for (let i = start; i <= end; i += 1) result.push(i - 1);
-  }
-  return result;
+  return parseNumberRanges(v, total);
 }
 
 /**
@@ -156,13 +167,17 @@ async function chooseRulesSmart(state, env) {
       // Pass the already-read content so analyzeGitignore doesn't re-read the
       // file we just parsed above (avoids a redundant disk hit and keeps the
       // single read site consistent with what the user sees on stdout).
-      content: rawContent
-    });
+      content: rawContent,
+      // The source .gitignore may live outside the project root (e.g. passed
+      // via --from). Signal detection must run against the actual project
+      // directory (env.cwd), not the directory containing the source file.
+      projectPath: env.cwd
+    }, { stderr: env.stderr });
   } catch (err) {
     const stderr = env.stderr || process.stderr;
     stderr.write(`Could not analyze ${path.basename(sourcePath)}: ${err.message}\n`);
     stderr.write(`Falling back to inline rule entry.\n`);
-    debugError(err, 'choose-rules-smart.analyze');
+    debugError(err, 'choose-rules-smart.analyze', env);
     return null;
   }
 
@@ -171,23 +186,28 @@ async function chooseRulesSmart(state, env) {
     env.stdout.write(formatMatchedComponentsHeader(analysis.matchedComponents));
   }
 
-  // Build coverage annotations and pre-selection
+  // Build coverage annotations and pre-selection.
   // A line is "covered" if ANY matched component contains it (full OR partial match).
   // For full matches the component fully explains the line.
   // For partial matches the line is one of the matched rules; the component just
   // has additional rules the user didn't include.
-  const coveredByLine = new Map(); // line → { id, classification }
+  //
+  // The map keys are normalized (trimmed) so that a rule like "logs/   " in the
+  // source .gitignore is recognized as covered by a component that contains
+  // "logs/" — they are the same gitignore pattern after whitespace normalization.
+  const coveredByLine = new Map(); // normalized line → { id, classification }
   for (const comp of analysis.matchedComponents) {
     for (const line of comp.matched) {
-      if (!coveredByLine.has(line)) {
-        coveredByLine.set(line, { id: comp.id, classification: comp.classification });
+      const key = normalizePattern(line);
+      if (!coveredByLine.has(key)) {
+        coveredByLine.set(key, { id: comp.id, classification: comp.classification });
       }
     }
   }
   const annotations = {};
   const initialSelected = new Set();
   for (let i = 0; i < lines.length; i += 1) {
-    const cov = coveredByLine.get(lines[i]);
+    const cov = coveredByLine.get(normalizePattern(lines[i]));
     if (cov) {
       const marker = cov.classification === 'full' ? 'fully covered' : 'partially covered';
       annotations[i] = `${marker} by ${cov.id}`;
@@ -255,7 +275,7 @@ async function promptInlineRules(env) {
   env.stdout.write('Enter rules one per line. Submit a blank line when finished.\n');
   while (true) {
     const rule = await env.ask('Rule: ');
-    if (!String(rule || '').trim()) break;
+    if (!normalizeAnswer(rule)) break;
     rules.push(String(rule));
   }
   return rules;
@@ -305,4 +325,4 @@ async function promptPresetCreation(options, env) {
   return state;
 }
 
-module.exports = { promptComponentCreation, promptPresetCreation, selectItems, parseToggleCommand, runToggleSelection };
+module.exports = { promptComponentCreation, promptPresetCreation, selectItems, parseToggleCommand, runToggleSelection, parseNumberRanges };

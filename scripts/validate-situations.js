@@ -10,6 +10,7 @@ const componentsDir = path.join(repoRoot, 'components');
 const presetsDir = path.join(repoRoot, 'presets');
 
 const { listDefinitions: listDefinitionsArray } = require('../src/core/fs');
+const { readJson } = require('../src/core/json');
 
 const workflows = new Set(['init', 'adopt', 'generate']);
 // v0.6.4 implements only one addon: ensureGitRepo, used by init/adopt to
@@ -65,7 +66,7 @@ function readSituations(errors) {
         return {
           file,
           filePath,
-          data: JSON.parse(fs.readFileSync(filePath, 'utf8'))
+          data: readJson(filePath)
         };
       } catch (error) {
         errors.push(`${file}: invalid JSON: ${error.message}`);
@@ -198,6 +199,15 @@ function validateExpected(data, label, errors) {
       errors.push(`${label}: expected.writes must list generated files`);
     }
   }
+
+  // Adopt is preview-only without --apply; a situation that expects writes
+  // must include --apply in the command, otherwise the test would always fail
+  // (the workflow returns preview: true and writes nothing).
+  if (data.workflow === 'adopt' && Array.isArray(data.expected.writes) && data.expected.writes.length > 0) {
+    if (!data.command.includes('--apply')) {
+      errors.push(`${label}: adopt with expected.writes requires --apply in command`);
+    }
+  }
 }
 
 function assertPreset(preset, location, context) {
@@ -227,7 +237,7 @@ function validateShippedPresets(shippedPresets, shippedComponents, errors) {
   for (const presetId of shippedPresets) {
     const filePath = path.join(presetsDir, `${presetId}.json`);
     try {
-      presetData.set(presetId, JSON.parse(fs.readFileSync(filePath, 'utf8')));
+      presetData.set(presetId, readJson(filePath));
     } catch (e) {
       errors.push(`preset ${presetId}: invalid JSON: ${e.message}`);
     }

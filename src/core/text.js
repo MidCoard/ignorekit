@@ -21,6 +21,14 @@ function normalizeText(value) {
  * `{ normalized, original }` with both fields equal to the raw line; that
  * was misleading and has been simplified.
  *
+ * Behavioral note: indented comment lines (e.g. "  # comment") are now
+ * correctly skipped because the comment check runs on `trimmed`. Earlier
+ * versions only skipped lines whose original text started with "#", so
+ * indented comments were incorrectly treated as significant rules. This
+ * aligns with git's own .gitignore parsing, which treats any line whose
+ * trimmed form starts with "#" as a comment regardless of leading
+ * whitespace.
+ *
  * @param {string} content
  * @param {object} [opts]
  * @param {boolean} [opts.keepRaw] - Return `{original}` objects instead of strings
@@ -41,4 +49,19 @@ function parseSignificantLines(content, { keepRaw = false } = {}) {
   return out;
 }
 
-module.exports = { normalizeText, parseSignificantLines };
+/**
+ * Normalize a gitignore pattern for matching purposes.
+ * Trims leading and trailing whitespace so patterns that differ only in
+ * padding are treated as the same rule. Directory-only patterns, escaped
+ * spaces, and escaped comments have semantics that must not be altered
+ * beyond this trim — Git itself ignores leading whitespace in patterns
+ * (unless escaped), so stripping it is consistent with how Git resolves
+ * the rule.
+ * @param {string} line
+ * @returns {string}
+ */
+function normalizePattern(line) {
+  return line.trim();
+}
+
+module.exports = { normalizeText, parseSignificantLines, normalizePattern };

@@ -70,3 +70,24 @@ test('returns no signal for a project without standard manifests', () => {
     workspace.cleanup();
   }
 });
+
+test('warns on stderr when package.json exists but is unreadable', () => {
+  const workspace = createTempWorkspace();
+  try {
+    // Write an invalid JSON file — readJsonOrNull returns null for
+    // SyntaxError, and the file exists, so the warning path is triggered.
+    workspace.writeText('project/package.json', '{invalid json!!!');
+    const stderrChunks = [];
+    const signals = detectProjectSignals(workspace.path('project'), {
+      stderr: { write: (chunk) => { stderrChunks.push(String(chunk)); return true; } }
+    });
+    // No Node.js signal because the JSON could not be parsed
+    assert.ok(!signals.some(s => s.preset === 'node'),
+      'should not detect node signal when package.json is invalid');
+    // A warning must have been written to stderr
+    const stderr = stderrChunks.join('');
+    assert.match(stderr, /Warning.*package\.json.*could not be read/);
+  } finally {
+    workspace.cleanup();
+  }
+});

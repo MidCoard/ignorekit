@@ -387,3 +387,96 @@ test('scorePreset with line coverage: preset covering more lines wins', () => {
   assert.ok(javaGradle.score > rust.score,
     `java-gradle (${javaGradle.score}) should beat rust (${rust.score}) when java-gradle covers more lines`);
 });
+
+// --- #1: normalizePattern must trim whitespace for matching ---
+
+test('normalizePattern trims leading and trailing whitespace so patterns match regardless of padding', () => {
+  const { normalizePattern } = require('../src/workflows/analyze');
+  // Patterns with leading/trailing whitespace must normalize to the same key
+  // as their trimmed form, so matching is not broken by whitespace differences.
+  assert.equal(normalizePattern('  node_modules/'), 'node_modules/',
+    'leading whitespace must be trimmed');
+  assert.equal(normalizePattern('node_modules/  '), 'node_modules/',
+    'trailing whitespace must be trimmed');
+  assert.equal(normalizePattern('  node_modules/  '), 'node_modules/',
+    'both leading and trailing whitespace must be trimmed');
+  assert.equal(normalizePattern('node_modules/'), 'node_modules/',
+    'already-trimmed pattern is unchanged');
+});
+
+test('matchComponent matches lines that differ only in leading/trailing whitespace', () => {
+  // Input lines have trailing spaces; component content does not (or vice versa).
+  // normalizePattern must make them match.
+  const inputLines = ['node_modules/', '  dist/  ', '.env  '];
+  const componentContent = 'node_modules/\ndist/\n.env\n';
+  const result = matchComponent(inputLines, componentContent);
+  assert.equal(result.matched.length, 3,
+    `all 3 lines should match despite whitespace differences; got ${result.matched.length} matched, ${result.unmatched.length} unmatched`);
+  assert.equal(result.unmatched.length, 0);
+  assert.equal(result.ratio, 1.0);
+});
+
+test('analyze size guard uses byte length, not character length', () => {
+  // A string of 600 KiB of ASCII characters is 600 KiB in both .length and
+  // Buffer.byteLength(). But a string with multi-byte characters (e.g. CJK)
+  // has .length < Buffer.byteLength() — a 400 KiB character string of 3-byte
+  // UTF-8 characters is 1.2 MiB in bytes, exceeding the 1 MiB guard.
+  // The size guard must measure bytes, not characters, to correctly reject
+  // oversized content.
+  const { analyzeGitignore } = require('../src/workflows/analyze');
+  const workspace = createTempWorkspace();
+  try {
+    // 400,000 CJK characters: each is 3 bytes in UTF-8 = 1,200,000 bytes > 1 MiB.
+    // .length is 400,000 which is < 1 MiB, so a character-based guard would
+    // incorrectly allow this content through.
+    const cjkContent = '一'.repeat(400000) + '\n';
+    assert.ok(cjkContent.length < 1024 * 1024,
+      `character length (${cjkContent.length}) must be under 1 MiB for the test to be valid`);
+    assert.ok(Buffer.byteLength(cjkContent, 'utf8') > 1024 * 1024,
+      `byte length (${Buffer.byteLength(cjkContent, 'utf8')}) must exceed 1 MiB for the test to be valid`);
+
+    assert.throws(
+      () => analyzeGitignore({
+        gitignorePath: workspace.path('.gitignore'),
+        distRoot: workspace.path('dist'),
+        content: cjkContent
+      }),
+      /too large/
+    );
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #3: runAnalyzeWorkflow must forward projectPath for signal detection ---
+
+test('runAnalyzeWorkflow detects signals from project root when .gitignore is in a subdirectory', () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/platform/macos.gitignore', '.DS_Store\n');
+    workspace.writeText('dist/components/language/node.gitignore', 'node_modules/\n');
+    workspace.writeText('dist/components/framework/vite.gitignore', 'dist/\n');
+    workspace.writeJson('dist/presets/generic.json', { name: 'generic', components: ['platform/macos'] });
+    workspace.writeJson('dist/presets/node.json', { name: 'node', base: 'generic', components: ['language/node'] });
+    workspace.writeJson('dist/presets/vite.json', { name: 'vite', base: 'node', components: ['framework/vite'] });
+    // package.json is at the project root, but the .gitignore is in a subdirectory.
+    workspace.writeJson('project/package.json', { scripts: { dev: 'vite' }, devDependencies: { vite: '^5.0.0' } });
+    workspace.writeText('project/subdir/.gitignore', '.DS_Store\n');
+
+    let output = '';
+    const result = runAnalyzeWorkflow({
+      gitignorePath: workspace.path('project/subdir/.gitignore'),
+      distRoot: workspace.path('dist'),
+      suggestPreset: true,
+      projectPath: workspace.path('project')
+    }, { stdout: { write: text => { output += text; } }, cwd: workspace.root });
+
+    // Signal detection must scan the project root (where package.json lives),
+    // not the subdirectory containing the .gitignore.
+    assert.equal(result.bestPreset.id, 'vite',
+      'signal detection should find Vite from project root, not subdir');
+    assert.match(output, /Vite detected in package.json/);
+  } finally {
+    workspace.cleanup();
+  }
+});

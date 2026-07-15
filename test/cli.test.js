@@ -450,7 +450,8 @@ test('adopt --component=foo --component=bar collects both as repeated values', a
       '--preset', 'empty',
       '--component=language/node',
       '--component=framework/vite',
-      '--dist-root', workspace.path('dist')
+      '--dist-root', workspace.path('dist'),
+      '--apply'
     ], {
       stdout: { write: () => {} },
       stderr: { write: () => {} },
@@ -556,7 +557,7 @@ test('parseArgs accepts a value with spaces after --key=', () => {
 // --- #14: applyUserRootDefault must record explicit user intent ---
 
 test('applyUserRootDefault marks _userRootExplicit=true when --user-root was passed', () => {
-  const { applyUserRootDefault } = require('../src/cli/resolver-factory');
+  const { applyUserRootDefault } = require('../src/core/resolver-factory');
   const options = { userRoot: '/some/where' };
   applyUserRootDefault(options);
   assert.equal(options.userRoot, '/some/where');
@@ -564,7 +565,7 @@ test('applyUserRootDefault marks _userRootExplicit=true when --user-root was pas
 });
 
 test('applyUserRootDefault marks _userRootExplicit=false when --user-root was omitted', () => {
-  const { applyUserRootDefault } = require('../src/cli/resolver-factory');
+  const { applyUserRootDefault } = require('../src/core/resolver-factory');
   const options = {};
   applyUserRootDefault(options);
   // The default USER_ROOT path is applied (preserving the historical CLI UX).
@@ -836,4 +837,236 @@ test('parseSignificantLines without keepRaw returns strings (unchanged)', () => 
   const { parseSignificantLines } = require('../src/core/text');
   const lines = parseSignificantLines('cache/\n# comment\n\nsecret\n');
   assert.deepEqual(lines, ['cache/', 'secret']);
+});
+
+// --- #4 (P1): pickPresetInteractive must receive env.ask from init/adopt ---
+
+test('init without --preset passes env.ask through to pickPresetInteractive', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    // No 'generic' preset — without env.ask the picker has no safe default and
+    // returns null (exit 1). With env.ask passed through, the test-provided
+    // ask function drives the picker and returns 'alpha' (exit 0).
+    workspace.writeJson('dist/presets/alpha.json', { name: 'alpha', components: [] });
+
+    let askCalledWith = null;
+    const result = await runCli([
+      'init', workspace.path('project'),
+      '--no-git',
+      '--dist-root', workspace.path('dist'),
+      '--yes'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root,
+      ask: async (prompt) => {
+        askCalledWith = prompt;
+        return 'alpha';
+      }
+    });
+
+    // If env.ask was correctly passed through, the picker uses it and returns
+    // 'alpha'. Without the fix, ask is never called and the picker returns null.
+    assert.ok(askCalledWith !== null, 'env.ask should have been called by pickPresetInteractive');
+    assert.match(askCalledWith, /Pick a preset/);
+    assert.equal(result.exitCode, 0, 'init should succeed when ask drives the picker');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('adopt without --preset passes env.ask through to pickPresetInteractive', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    // No 'generic' preset — same reasoning as the init test above.
+    workspace.writeJson('dist/presets/alpha.json', { name: 'alpha', components: [] });
+    fs.mkdirSync(workspace.path('project'));
+
+    let pickerAskCalled = false;
+    // The adopt flow asks two questions: the preset picker and then the confirm.
+    // Return 'alpha' for the picker, 'y' for the confirm.
+    const answers = ['alpha', 'y'];
+    const result = await runCli([
+      'adopt', workspace.path('project'),
+      '--dist-root', workspace.path('dist'),
+      '--apply'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root,
+      ask: async (prompt) => {
+        if (/Pick a preset/.test(prompt)) pickerAskCalled = true;
+        return answers.shift() || '';
+      }
+    });
+
+    assert.ok(pickerAskCalled, 'env.ask should have been called by pickPresetInteractive');
+    assert.equal(result.exitCode, 0, 'adopt should succeed when ask drives the picker');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #1 (Round 6): pickPresetInteractive must receive env.cwd from init/adopt ---
+
+test('init without --preset passes env.cwd to pickPresetInteractive for .gitignore detection', async () => {
+  // When the project directory contains a .gitignore, pickPresetInteractive
+  // tries to analyze it for preset suggestions. The picker resolves
+  // options.projectPath relative to env.cwd. Without env.cwd in the picker
+  // env, the path resolution falls back to process.cwd() and the .gitignore
+  // is never found — the user sees no suggestion. With env.cwd passed through,
+  // the picker resolves the project path relative to the test-provided cwd
+  // and finds the .gitignore.
+  //
+  // Use a RELATIVE project path so that path.resolve(env.cwd, path) actually
+  // depends on env.cwd. An absolute path would bypass cwd entirely.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    // Place a .gitignore in the project directory so the picker can detect it
+    workspace.writeText('project/.gitignore', 'logs/\n');
+
+    const output = [];
+    const result = await runCli([
+      'init', 'project',
+      '--no-git',
+      '--dist-root', workspace.path('dist'),
+      '--overwrite',
+      '--yes'
+    ], {
+      stdout: { write: text => output.push(String(text)) },
+      stderr: { write: () => {} },
+      cwd: workspace.root,
+      ask: async () => 'demo'
+    });
+
+    assert.equal(result.exitCode, 0, 'init should succeed when cwd is passed to picker');
+    // The picker should have found the .gitignore and printed the analysis header.
+    // Without env.cwd, the .gitignore is not found and "Found .gitignore" never appears.
+    assert.match(output.join(''), /Found .gitignore/,
+      'picker should detect .gitignore when env.cwd is passed through');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('adopt without --preset passes env.cwd to pickPresetInteractive for .gitignore detection', async () => {
+  // Same as the init test above but for the adopt command. Uses a relative
+  // project path so env.cwd is required for correct path resolution.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    workspace.writeText('project/.gitignore', 'logs/\n');
+
+    const output = [];
+    const answers = ['demo', 'y'];
+    const result = await runCli([
+      'adopt', 'project',
+      '--dist-root', workspace.path('dist'),
+      '--apply'
+    ], {
+      stdout: { write: text => output.push(String(text)) },
+      stderr: { write: () => {} },
+      cwd: workspace.root,
+      ask: async () => answers.shift() || ''
+    });
+
+    assert.equal(result.exitCode, 0, 'adopt should succeed when cwd is passed to picker');
+    assert.match(output.join(''), /Found .gitignore/,
+      'picker should detect .gitignore when env.cwd is passed through');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #3 (P0): create command interactive env must include stderr ---
+
+test('create component interactive flow routes stderr through env.stderr', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('project/.gitignore', 'custom-rule-only-this-test/\n');
+    const fakeUserRoot = path.join(workspace.root, 'fake-user');
+    fs.mkdirSync(path.join(fakeUserRoot, 'components'), { recursive: true });
+
+    const stderrWrites = [];
+    const answers = [
+      'local',                         // category
+      'stderr-routing-test',           // name
+      workspace.path('project/.gitignore'), // source
+      '',                              // toggle rules — done
+      'y'                              // confirm
+    ];
+
+    const result = await runCli([
+      'create', 'component',
+      '--user-root', fakeUserRoot,
+      '--output-root', fakeUserRoot
+    ], {
+      ask: () => answers.shift(),
+      stdout: { write: () => {} },
+      stderr: { write: text => stderrWrites.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0, `expected exit 0; stderr: ${stderrWrites.join('')}`);
+    // The key assertion: the component was created successfully with the test
+    // stderr stream. Without the fix, the inner env passed to
+    // promptComponentCreation lacks stderr, so chooseRulesSmart's
+    // analyzeGitignore call and fallback error messages would bypass the
+    // test-provided stderr and write to process.stderr instead.
+    const userFile = path.join(fakeUserRoot, 'components', 'local', 'stderr-routing-test.gitignore');
+    assert.ok(fs.existsSync(userFile), `Expected file at ${userFile}`);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('create component interactive flow passes stderr to chooseRulesSmart', async () => {
+  // This test specifically exercises the stderr routing through the
+  // create-component interactive path. When the source .gitignore triggers
+  // a fallback (e.g. oversized file), chooseRulesSmart writes to env.stderr.
+  // Without the fix, the inner env object at cli.js:646-648 lacks stderr,
+  // so the fallback message goes to process.stderr instead of the test stream.
+  const workspace = createTempWorkspace();
+  try {
+    const hugePath = workspace.path('project/huge.gitignore');
+    fs.mkdirSync(path.dirname(hugePath), { recursive: true });
+    const padding = '\n'.repeat(2 * 1024 * 1024);
+    fs.writeFileSync(hugePath, 'real-rule-A\nreal-rule-B\n' + padding, 'utf8');
+
+    const fakeUserRoot = path.join(workspace.root, 'fake-user');
+    fs.mkdirSync(path.join(fakeUserRoot, 'components'), { recursive: true });
+
+    const stderrWrites = [];
+    const answers = [
+      'local',                         // category
+      'stderr-fallback-test',          // name
+      hugePath,                        // source — large file triggers fallback
+      'inline-rule',                   // inline rule (fallback path)
+      '',                              // blank → done
+      'y'                              // confirm
+    ];
+
+    const result = await runCli([
+      'create', 'component',
+      '--user-root', fakeUserRoot,
+      '--output-root', fakeUserRoot
+    ], {
+      ask: () => answers.shift(),
+      stdout: { write: () => {} },
+      stderr: { write: text => stderrWrites.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0, `expected exit 0; stderr: ${stderrWrites.join('')}`);
+    // The fallback message from chooseRulesSmart should appear in the
+    // test-provided stderr, not on process.stderr.
+    const stderrText = stderrWrites.join('');
+    assert.match(stderrText, /Could not analyze|Falling back/,
+      'chooseRulesSmart fallback message should appear in env.stderr');
+  } finally {
+    workspace.cleanup();
+  }
 });

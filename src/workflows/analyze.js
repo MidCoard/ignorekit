@@ -3,24 +3,14 @@
 const fs = require('fs');
 const path = require('path');
 const { readJson } = require('../core/json');
-const { parseSignificantLines } = require('../core/text');
+const { parseSignificantLines, normalizePattern } = require('../core/text');
 const { resolvePresetComponents } = require('../definitions/resolver');
-const { buildResolver } = require('../cli/resolver-factory');
+const { buildResolver } = require('../core/resolver-factory');
 const { DIST_ROOT } = require('../core/path');
 const { detectProjectSignals } = require('../detection/project-signals');
 const { formatMatchedComponentsTable } = require('./_format');
 const { debugError } = require('../core/debug');
-
-/**
- * Normalize a gitignore pattern for matching purposes.
- * Keeps Git's pattern syntax intact. Directory-only patterns, escaped spaces,
- * and escaped comments have semantics that must not be normalized away.
- * @param {string} line
- * @returns {string}
- */
-function normalizePattern(line) {
-  return line;
-}
+const { MAX_CONTENT_BYTES } = require('../core/constants');
 
 /**
  * Compute match result for a component against input lines.
@@ -51,10 +41,6 @@ function matchComponent(inputLines, componentContent) {
 
 const FULL_MATCH_THRESHOLD = 0.8;
 const PARTIAL_MATCH_THRESHOLD = 0.3;
-
-// Cap the source .gitignore size, matching the provider fetch guard in
-// gitignore-io.js. A real .gitignore is tiny; the cap bounds worst-case memory.
-const MAX_GITIGNORE_BYTES = 1024 * 1024;
 
 /**
  * Classify a match ratio.
@@ -109,9 +95,16 @@ function scorePreset(presetComponents, componentResults, totalInputLines = 0) {
       addedRuleCount += result.unmatched.length;
     } else {
       missCount++;
-      // Even a "none" classification means some lines matched — count them toward
-      // coverage. Only the unmatched lines are genuinely "added" noise; the matched
-      // lines are already in the input and must not be double-penalized.
+      // A "none"-classified component (ratio < 30%) still has some matched lines.
+      // The 0.25 weight gives partial credit so that a preset with many weakly-
+      // matching components can still outscore one with fewer but stronger matches
+      // when the weak matches collectively cover more of the input. This is a
+      // scoring heuristic, not a correctness property — the weight is low enough
+      // that a single spurious match cannot inflate a preset's score meaningfully,
+      // but high enough that a preset whose 20 components each match 1-2 lines
+      // accumulates real coverage credit. Only the unmatched lines are genuinely
+      // "added" noise; the matched lines are already in the input and must not
+      // be double-penalized.
       matchedLineCount += result.matched.length * WEIGHT_NONE;
       addedRuleCount += result.unmatched.length;
     }
@@ -149,11 +142,18 @@ function scorePreset(presetComponents, componentResults, totalInputLines = 0) {
  * @param {string} options.distRoot - Dist root for definitions
  * @param {string} [options.userRoot] - User-level override directory
  * @param {string} [options.workspaceRoot] - Workspace-level definition directory
+ * @param {string} [options.projectPath] - Project root directory for signal detection.
+ *   When absent, defaults to the directory containing the .gitignore file. Callers
+ *   that supply a .gitignore from a non-project-root location (e.g. chooseRulesSmart
+ *   receiving an arbitrary --from path) should pass the actual project root so that
+ *   signal detection (package.json, build.gradle, etc.) scans the right directory.
+ * @param {object} [env] - Environment streams
+ * @param {object} [env.stderr] - Writable stream for warnings (default: process.stderr)
  * @returns {{ totalLines: number, matchedComponents: object[], unmatchedLines: string[], componentResults: Map, bestPreset: object|null, allPresets: object[], originalLines?: string[] }}
  */
-function analyzeGitignore(options) {
+function analyzeGitignore(options, env) {
   const gitignorePath = path.resolve(options.gitignorePath);
-  const projectPath = path.dirname(gitignorePath);
+  const projectPath = options.projectPath || path.dirname(gitignorePath);
   // Guard against pathological inputs before reading the whole file into memory.
   // A .gitignore is a small text file; anything past 1 MiB is either a mistake or
   // an attempt to exhaust memory, so refuse rather than buffer it.
@@ -163,14 +163,15 @@ function analyzeGitignore(options) {
   // in-memory.
   let rawContent;
   if (typeof options.content === 'string') {
-    if (options.content.length > MAX_GITIGNORE_BYTES) {
-      throw new Error(`.gitignore is too large to analyze (${options.content.length} bytes, limit ${MAX_GITIGNORE_BYTES})`);
+    const byteLength = Buffer.byteLength(options.content, 'utf8');
+    if (byteLength > MAX_CONTENT_BYTES) {
+      throw new Error(`.gitignore is too large to analyze (${byteLength} bytes, limit ${MAX_CONTENT_BYTES})`);
     }
     rawContent = options.content;
   } else {
     const stat = fs.statSync(gitignorePath);
-    if (stat.size > MAX_GITIGNORE_BYTES) {
-      throw new Error(`.gitignore is too large to analyze (${stat.size} bytes, limit ${MAX_GITIGNORE_BYTES})`);
+    if (stat.size > MAX_CONTENT_BYTES) {
+      throw new Error(`.gitignore is too large to analyze (${stat.size} bytes, limit ${MAX_CONTENT_BYTES})`);
     }
     rawContent = fs.readFileSync(gitignorePath, 'utf8');
   }
@@ -184,7 +185,7 @@ function analyzeGitignore(options) {
   const distRoot = options.distRoot || DIST_ROOT;
   const resolver = buildResolver({ options, projectDirHint: projectPath });
   const signalByPreset = new Map(
-    detectProjectSignals(projectPath).map(signal => [signal.preset, signal])
+    detectProjectSignals(projectPath, env).map(signal => [signal.preset, signal])
   );
 
   // Load all components and match
@@ -199,7 +200,7 @@ function analyzeGitignore(options) {
         componentResults.set(id, result);
       }
     } catch (err) {
-      debugError(err, 'analyze.readComponent');
+      debugError(err, 'analyze.readComponent', env);
       // Skip components that can't be read
     }
   }
@@ -265,13 +266,13 @@ function analyzeGitignore(options) {
           evidence: signal ? [signal.evidence] : []
         });
       } catch (err) {
-        debugError(err, 'analyze.preset-base');
+        debugError(err, 'analyze.preset-base', env);
         // Skip presets with broken base chains
       }
     }
     allPresets.sort((a, b) => b.score - a.score);
   } catch (err) {
-    debugError(err, 'analyze.presets-dir');
+    debugError(err, 'analyze.presets-dir', env);
     // No presets directory
   }
 
@@ -299,6 +300,10 @@ function analyzeGitignore(options) {
  * @param {string} [options.distRoot] - Override dist root
  * @param {string} [options.userRoot] - User-level override directory
  * @param {string} [options.workspaceRoot] - Workspace-level definition directory
+ * @param {string} [options.projectPath] - Project root directory for signal detection.
+ *   When absent, defaults to the directory containing the .gitignore file. Pass this
+ *   when the .gitignore is in a subdirectory and signal detection (package.json,
+ *   build.gradle, etc.) should scan the actual project root instead.
  * @param {object} env
  * @param {object} env.stdout - Writable stream for output
  * @param {string} [env.cwd] - Current working directory
@@ -312,8 +317,9 @@ function runAnalyzeWorkflow(options, env) {
     gitignorePath: path.resolve(cwd, options.gitignorePath),
     distRoot: options.distRoot || DIST_ROOT,
     userRoot: options.userRoot,
-    workspaceRoot: options.workspaceRoot
-  });
+    workspaceRoot: options.workspaceRoot,
+    projectPath: options.projectPath
+  }, { stderr: env.stderr });
 
   // Header
   stdout.write(`Analyzing: ${path.basename(options.gitignorePath)} (${analysis.totalLines} significant lines)\n\n`);
@@ -376,4 +382,13 @@ function runAnalyzeWorkflow(options, env) {
   };
 }
 
+// Re-export normalizePattern and parseSignificantLines from core/text for
+// backward compatibility. These utilities belong in core/text.js (the correct
+// layer for pure text operations), not in a workflow module. No production
+// code imports them from here anymore — only test files reference these
+// re-exports. Import from core/text.js directly instead.
+//
+// @deprecated Import parseSignificantLines and normalizePattern from
+// '../core/text' (or '../../core/text' from test files) instead of from
+// this module. The re-exports will be removed in a future major version.
 module.exports = { runAnalyzeWorkflow, analyzeGitignore, parseSignificantLines, normalizePattern, matchComponent, classifyMatch, scorePreset };

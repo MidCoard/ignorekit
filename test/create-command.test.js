@@ -8,6 +8,24 @@ const test = require('node:test');
 const { runCli } = require('../src/cli');
 const { createTempWorkspace } = require('./helpers/temp-workspace');
 
+/**
+ * Track files written to the real USER_ROOT during a test and guarantee their
+ * removal in a finally block. Without this, an assertion failure before the
+ * inline `fs.rmSync` call leaves test artifacts in ~/.ignorekit.
+ *
+ * @param {string[]} paths - Absolute paths under USER_ROOT that the test may create
+ * @returns {{ cleanup: () => void }} Call cleanup in the finally block
+ */
+function trackUserRootFiles(paths) {
+  return {
+    cleanup() {
+      for (const p of paths) {
+        try { fs.rmSync(p, { force: true }); } catch {}
+      }
+    }
+  };
+}
+
 test('create component keeps category separate from the component name', async () => {
   const workspace = createTempWorkspace();
   try {
@@ -226,6 +244,9 @@ test('interactive preset creation consumes piped terminal input across every pro
 
 test('create component --user-root is used only for discovery, output defaults to USER_ROOT', async () => {
   const workspace = createTempWorkspace();
+  const { USER_ROOT } = require('../src/core/path');
+  const expectedPath = path.join(USER_ROOT, 'components', 'local', 'user-root-output-test.gitignore');
+  const tracker = trackUserRootFiles([expectedPath]);
   try {
     workspace.writeText('.gitignore', 'unique-custom-rule-xyz/\n');
     const discoveryRoot = path.join(workspace.root, 'discovery-user');
@@ -256,11 +277,9 @@ test('create component --user-root is used only for discovery, output defaults t
       '--user-root must not be used as the output directory');
 
     // Output defaults to the real USER_ROOT.
-    const { USER_ROOT } = require('../src/core/path');
-    const expectedPath = path.join(USER_ROOT, 'components', 'local', 'user-root-output-test.gitignore');
     assert.ok(fs.existsSync(expectedPath), `Expected file at ${expectedPath}`);
-    try { fs.rmSync(expectedPath, { force: true }); } catch {}
   } finally {
+    tracker.cleanup();
     workspace.cleanup();
   }
 });
@@ -400,6 +419,9 @@ test('create component rejects invalid ids', async () => {
 
 test('create component --from defaults to user definitions directory', async () => {
   const workspace = createTempWorkspace();
+  const { USER_ROOT } = require('../src/core/path');
+  const expectedPath = path.join(USER_ROOT, 'components', 'local', 'test-default.gitignore');
+  const tracker = trackUserRootFiles([expectedPath]);
   try {
     workspace.writeText('project/.gitignore', 'custom-pattern/\n');
     workspace.writeText('dist/components/dummy.gitignore', '# dummy\n');
@@ -419,15 +441,8 @@ test('create component --from defaults to user definitions directory', async () 
     // The output path should be under USER_ROOT (~/.ignorekit)
     const outputText = output.join('');
     assert.match(outputText, /user definitions layer/);
-
-    // Clean up the file that was written to the real USER_ROOT.
-    // Remove ONLY the specific file, never the parent directory — path.dirname()
-    // resolves to ~/.ignorekit/components/local, and a recursive rm of that
-    // would wipe every component the user has stored there.
-    const { USER_ROOT } = require('../src/core/path');
-    const expectedPath = path.join(USER_ROOT, 'components', 'local', 'test-default.gitignore');
-    try { fs.rmSync(expectedPath, { force: true }); } catch {}
   } finally {
+    tracker.cleanup();
     workspace.cleanup();
   }
 });
@@ -660,4 +675,28 @@ test('interactive component toggle pre-deselects covered rules', async () => {
   } finally {
     workspace.cleanup();
   }
+});
+
+// --- parseNumberRanges validation ---
+
+test('parseNumberRanges rejects double-dash input like "1--3"', () => {
+  const { parseNumberRanges } = require('../src/interactive/create');
+  // "1--3" splits into ["1", ""] which silently becomes just item 1.
+  // The function must reject this as invalid input.
+  assert.equal(parseNumberRanges('1--3', 5), null);
+});
+
+test('parseNumberRanges rejects empty range like "-"', () => {
+  const { parseNumberRanges } = require('../src/interactive/create');
+  assert.equal(parseNumberRanges('-', 5), null);
+});
+
+test('parseNumberRanges rejects range with empty end like "1-"', () => {
+  const { parseNumberRanges } = require('../src/interactive/create');
+  assert.equal(parseNumberRanges('1-', 5), null);
+});
+
+test('parseNumberRanges accepts valid range "1-3"', () => {
+  const { parseNumberRanges } = require('../src/interactive/create');
+  assert.deepEqual(parseNumberRanges('1-3', 5), [0, 1, 2]);
 });

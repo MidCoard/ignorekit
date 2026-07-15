@@ -81,6 +81,16 @@ function removeCachedFiles(projectPath, files, options = {}) {
   if (options.dryRun) {
     return { action: 'dry-run', files };
   }
+  // Reject filenames containing newlines or null bytes. The `--` separator
+  // prevents option injection, but a newline in a filename would cause
+  // spawnSync to split it across argument boundaries, and a null byte
+  // truncates the string. Both are pathological for version-controlled
+  // files and indicate a corrupted git index rather than legitimate paths.
+  for (const file of files) {
+    if (file.includes('\n') || file.includes('\r') || file.includes('\0')) {
+      throw new Error(`Refusing to pass filename with control characters to git: ${JSON.stringify(file)}`);
+    }
+  }
   const BATCH = 500;
   const removed = [];
   for (let i = 0; i < files.length; i += BATCH) {

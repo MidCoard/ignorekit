@@ -237,3 +237,108 @@ test('fetchGitignoreIoTemplates rejects when body+chunk exceeds MAX_BYTES', asyn
     delete require.cache[require.resolve('../src/providers/gitignore-io')];
   }
 });
+
+test('fetchGitignoreIoTemplates rejects on response stream error', async () => {
+  // If the response stream emits an error (e.g. connection reset mid-body),
+  // the promise must reject rather than hanging forever. Without a
+  // response.on('error') handler, the promise would never settle because
+  // neither 'end' nor the request-level 'error' fires for a response stream
+  // error.
+  const EventEmitter = require('events');
+  const https = require('https');
+  const origGet = https.get;
+
+  https.get = function mockGet(url, options, callback) {
+    const req = new EventEmitter();
+    req.destroy = () => {};
+    const response = new EventEmitter();
+    response.headers = {};
+    response.statusCode = 200;
+    response.setEncoding = () => {};
+    process.nextTick(() => {
+      callback(response);
+      // Simulate a response stream error (e.g. ECONNRESET mid-body)
+      setImmediate(() => response.emit('error', new Error('connection reset')));
+    });
+    return req;
+  };
+
+  try {
+    delete require.cache[require.resolve('../src/providers/gitignore-io')];
+    const fresh = require('../src/providers/gitignore-io');
+
+    await assert.rejects(
+      fresh.fetchGitignoreIoTemplates(['Node']),
+      /connection reset/
+    );
+  } finally {
+    https.get = origGet;
+    delete require.cache[require.resolve('../src/providers/gitignore-io')];
+  }
+});
+
+test('fetchGitignoreIoTemplates timeout rejects exactly once (no double-rejection)', async () => {
+  // The timeout handler must not call reject() after req.destroy(), because
+  // req.destroy() (even without an error argument) triggers 'error' on the
+  // request in the real Node.js HTTP implementation ("socket hang up"), which
+  // already triggers the error handler's reject(). A redundant reject() is
+  // silently ignored by native Promises but is a fragile pattern that breaks
+  // with non-native Promise implementations or rejection-tracking test
+  // frameworks.
+  const EventEmitter = require('events');
+  const https = require('https');
+  const origGet = https.get;
+
+  let rejectCount = 0;
+  https.get = function mockGet(url, options, callback) {
+    const req = new EventEmitter();
+    req.destroy = (err) => {
+      // Real http.ClientRequest.destroy() always emits 'error' on the request
+      // (typically "socket hang up"), even when called without an error argument.
+      process.nextTick(() => req.emit('error', err || new Error('socket hang up')));
+    };
+    process.nextTick(() => req.emit('timeout'));
+    return req;
+  };
+
+  try {
+    const OrigPromise = Promise;
+    const TrackingPromise = function(executor) {
+      return new OrigPromise((resolve, reject) => {
+        const trackingReject = (err) => {
+          rejectCount++;
+          reject(err);
+        };
+        executor(resolve, trackingReject);
+      });
+    };
+    Object.assign(TrackingPromise, OrigPromise);
+    TrackingPromise.resolve = OrigPromise.resolve;
+    TrackingPromise.reject = OrigPromise.reject;
+    TrackingPromise.all = OrigPromise.all;
+    TrackingPromise.race = OrigPromise.race;
+    TrackingPromise.allSettled = OrigPromise.allSettled;
+    TrackingPromise.prototype = OrigPromise.prototype;
+
+    global.Promise = TrackingPromise;
+    delete require.cache[require.resolve('../src/providers/gitignore-io')];
+    const fresh = require('../src/providers/gitignore-io');
+
+    try {
+      await OrigPromise.resolve(
+        fresh.fetchGitignoreIoTemplates(['Node'])
+      );
+      assert.fail('should have rejected');
+    } catch (err) {
+      assert.match(err.message, /timed out/);
+    } finally {
+      global.Promise = OrigPromise;
+    }
+
+    assert.equal(rejectCount, 1,
+      `expected exactly 1 rejection, got ${rejectCount} — timeout handler is calling reject() after req.destroy()`);
+  } finally {
+    https.get = origGet;
+    delete require.cache[require.resolve('../src/providers/gitignore-io')];
+  }
+});

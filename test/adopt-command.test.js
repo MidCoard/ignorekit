@@ -19,7 +19,8 @@ test('adopt with --preset skips interactive picker', async () => {
       '--preset',
       'demo',
       '--dist-root',
-      workspace.path('dist')
+      workspace.path('dist'),
+      '--apply'
     ], {
       stdout: { write: () => {} },
       stderr: { write: () => {} },
@@ -44,7 +45,7 @@ test('adopt keeps explicit extra components and avoids duplicating selected pres
 
     const result = await runCli([
       'adopt', workspace.path('project'), '--preset', 'java',
-      '--component', 'language/node', '--dist-root', workspace.path('dist')
+      '--component', 'language/node', '--dist-root', workspace.path('dist'), '--apply'
     ], {
       stdout: { write: () => {} },
       stderr: { write: () => {} },
@@ -73,7 +74,8 @@ test('adopt defaults path to current directory', async () => {
       'demo',
       '--dist-root',
       workspace.path('dist'),
-      '--overwrite-config'
+      '--overwrite-config',
+      '--apply'
     ], {
       stdout: { write: () => {} },
       stderr: { write: () => {} },
@@ -194,7 +196,8 @@ test('adopt with --overwrite-config replaces existing config', async () => {
       'demo',
       '--dist-root',
       workspace.path('dist'),
-      '--overwrite-config'
+      '--overwrite-config',
+      '--apply'
     ], {
       stdout: { write: () => {} },
       stderr: { write: () => {} },
@@ -296,7 +299,8 @@ test('adopt overwrites .gitignore directly and saves backup of original', async 
       '--preset',
       'demo',
       '--dist-root',
-      workspace.path('dist')
+      workspace.path('dist'),
+      '--apply'
     ], {
       stdout: { write: () => {} },
       stderr: { write: () => {} },
@@ -392,7 +396,8 @@ test('adopt creates .gitignore directly when none existed', async () => {
       '--preset',
       'demo',
       '--dist-root',
-      workspace.path('dist')
+      workspace.path('dist'),
+      '--apply'
     ], {
       stdout: { write: () => {} },
       stderr: { write: () => {} },
@@ -425,7 +430,7 @@ test('adopt preserves the source byte text of custom rules (trailing whitespace,
 
     const result = await runCli([
       'adopt', workspace.path('project'), '--preset', 'empty',
-      '--dist-root', workspace.path('dist'), '--overwrite-config'
+      '--dist-root', workspace.path('dist'), '--overwrite-config', '--apply'
     ], {
       stdout: { write: () => {} },
       stderr: { write: () => {} },
@@ -448,6 +453,71 @@ test('adopt preserves the source byte text of custom rules (trailing whitespace,
 
 // --- #3 (P0): adopt --yes must skip the post-preview confirm prompt ---
 
+test('adopt deduplicates custom rules that differ only in whitespace (#5)', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    // A .gitignore with the same rule appearing twice — once with trailing
+    // whitespace, once without. The dedup must treat them as the same rule
+    // and keep only one copy (preserving the original byte text of the first
+    // occurrence).
+    workspace.writeJson('dist/presets/empty.json', { name: 'empty', components: [] });
+    workspace.writeText('project/.gitignore', 'node_modules/\nnode_modules/   \ncustom-rule/\n');
+
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'empty',
+      '--dist-root', workspace.path('dist'), '--overwrite-config', '--apply'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    const config = JSON.parse(fs.readFileSync(workspace.path('project/ignorekit.json'), 'utf8'));
+    // The whitespace-duplicate "node_modules/" must appear only once in custom.
+    const nodeCount = config.custom.filter(r => r.trim() === 'node_modules/').length;
+    assert.equal(nodeCount, 1,
+      `expected exactly 1 'node_modules/' entry in custom, got ${nodeCount}: ${JSON.stringify(config.custom)}`);
+    // The genuinely distinct rule must also be present.
+    assert.ok(config.custom.some(r => r.trim() === 'custom-rule/'),
+      `expected 'custom-rule/' in custom, got: ${JSON.stringify(config.custom)}`);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('adopt recognizes covered rules despite whitespace mismatch (#6)', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    // The component file has "logs/" without trailing whitespace.
+    // The .gitignore has "logs/   " with trailing whitespace.
+    // adopt must recognize the rule as covered and NOT carry it forward as custom.
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    workspace.writeText('project/.gitignore', 'logs/   \ncustom-rule/\n');
+
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'demo',
+      '--dist-root', workspace.path('dist'), '--overwrite-config', '--apply'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    const config = JSON.parse(fs.readFileSync(workspace.path('project/ignorekit.json'), 'utf8'));
+    // "logs/" is covered by the component — must NOT appear in custom.
+    assert.ok(!config.custom.some(r => r.trim() === 'logs/'),
+      `'logs/' should be covered, not custom; got: ${JSON.stringify(config.custom)}`);
+    // The genuinely custom rule must be present.
+    assert.ok(config.custom.some(r => r.trim() === 'custom-rule/'),
+      `expected 'custom-rule/' in custom, got: ${JSON.stringify(config.custom)}`);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('adopt --yes skips the confirmation prompt and writes the file', async () => {
   const workspace = createTempWorkspace();
   try {
@@ -464,7 +534,7 @@ test('adopt --yes skips the confirmation prompt and writes the file', async () =
     const output = [];
     const result = await runCli([
       'adopt', workspace.path('project'), '--preset', 'demo',
-      '--dist-root', workspace.path('dist'), '--yes'
+      '--dist-root', workspace.path('dist'), '--yes', '--apply'
     ], {
       stdout: { write: (s) => output.push(String(s)) },
       stderr: { write: () => {} },
@@ -478,6 +548,134 @@ test('adopt --yes skips the confirmation prompt and writes the file', async () =
     // Sanity: the prompt should NOT have been written when --yes is set.
     assert.doesNotMatch(output.join(''), /Proceed\?/,
       '--yes should not show the Proceed? prompt');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #2: adopt must not write files without --apply ---
+
+test('adopt without --apply shows preview but does not write files', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    workspace.writeText('project/.gitignore', 'old-rule\n');
+
+    const output = [];
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'demo',
+      '--dist-root', workspace.path('dist')
+    ], {
+      stdout: { write: (s) => output.push(String(s)) },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    const out = output.join('');
+    // Preview must be shown
+    assert.match(out, /--- Preview ---/);
+    // But no files should be written
+    assert.equal(fs.existsSync(workspace.path('project/ignorekit.json')), false,
+      'config must not be written without --apply');
+    assert.equal(fs.existsSync(workspace.path('project/.gitignore.bak')), false,
+      'backup must not be created without --apply');
+    // The original .gitignore must be unchanged
+    assert.equal(workspace.readText('project/.gitignore'), 'old-rule\n',
+      'original .gitignore must be unchanged without --apply');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #2 (P1): adopt must guard analyzeGitignore against oversized files ---
+
+test('adopt degrades gracefully when .gitignore is too large to analyze', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    // Create a .gitignore larger than the 1 MiB guard.
+    const padding = '\n'.repeat(2 * 1024 * 1024);
+    workspace.writeText('project/.gitignore', 'logs/\n' + padding);
+
+    const errors = [];
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'demo',
+      '--dist-root', workspace.path('dist'), '--apply'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: (text) => errors.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    // Must not crash — adopt should proceed without analysis.
+    assert.equal(result.exitCode, 0, `expected exit 0; stderr: ${errors.join('')}`);
+    // A warning about the analysis failure should appear on stderr.
+    assert.match(errors.join(''), /too large|Could not analyze/,
+      'should warn about analysis failure on stderr');
+    // Config and .gitignore must still be written.
+    assert.ok(fs.existsSync(workspace.path('project/ignorekit.json')),
+      'config must be written even when analysis fails');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('adopt with --apply writes config and .gitignore', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    workspace.writeText('project/.gitignore', 'old-rule\n');
+
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'demo',
+      '--dist-root', workspace.path('dist'), '--apply'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.ok(fs.existsSync(workspace.path('project/ignorekit.json')),
+      'config must be written with --apply');
+    assert.ok(fs.existsSync(workspace.path('project/.gitignore.bak')),
+      'backup must be created with --apply when .gitignore exists');
+    const gitignore = workspace.readText('project/.gitignore');
+    assert.match(gitignore, /Generated by ignorekit/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('adopt skips backup when .gitignore.bak already exists and preserves the original backup', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    // Pre-existing .gitignore and a prior backup
+    workspace.writeText('project/.gitignore', 'old-rule\n');
+    workspace.writeText('project/.gitignore.bak', 'original-backup-content\n');
+
+    const output = [];
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'demo',
+      '--dist-root', workspace.path('dist'), '--apply'
+    ], {
+      stdout: { write: (s) => output.push(String(s)) },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    // The original backup must be preserved, not overwritten
+    assert.equal(workspace.readText('project/.gitignore.bak'), 'original-backup-content\n',
+      'existing .gitignore.bak must not be overwritten');
+    // A warning about skipping the backup should appear
+    assert.match(output.join(''), /Skipping backup.*already exists/);
   } finally {
     workspace.cleanup();
   }

@@ -4,7 +4,7 @@ const path = require('path');
 const { readJson } = require('../core/json');
 const { normalizeProjectConfig } = require('../config/project-config');
 const { resolvePresetComponents, resolvePresetChain } = require('../definitions/resolver');
-const { buildResolver } = require('../cli/resolver-factory');
+const { buildResolver } = require('../core/resolver-factory');
 const { parseSignificantLines } = require('../core/text');
 const { debugError } = require('../core/debug');
 
@@ -28,6 +28,44 @@ function summarizeLines(lines) {
 }
 
 /**
+ * Print a single component's detail line (and optional verbose content) to stdout.
+ * Returns true if the component was successfully read and displayed, false if skipped.
+ *
+ * @param {string} componentId - Component ID to display
+ * @param {object} resolver - Definition resolver
+ * @param {object} options - { verbose }
+ * @param {object} streams - { stdout, stderr }
+ * @param {Set<string>} resolvedComponents - Set to add successfully resolved IDs to
+ * @returns {boolean}
+ */
+function printComponentDetail(componentId, resolver, options, streams, resolvedComponents) {
+  let content;
+  try {
+    content = resolver.readComponent(componentId);
+  } catch (err) {
+    debugError(err, 'explain.readComponent', streams);
+    streams.stderr.write(`Warning: could not read component "${componentId}" — skipping. Set IGNOREKIT_DEBUG=1 for details.\n`);
+    return false;
+  }
+  resolvedComponents.add(componentId);
+  const lines = parseSignificantLines(content);
+  const ruleCount = lines.length;
+  const summary = summarizeLines(lines);
+  const pad = 24;
+  const idPadded = componentId.padEnd(pad);
+  const countLabel = `${ruleCount} rule${ruleCount !== 1 ? 's' : ''}`;
+  streams.stdout.write(`  ${idPadded} ${countLabel.padEnd(10)} ${summary}\n`);
+
+  if (options.verbose) {
+    for (const line of content.split('\n')) {
+      streams.stdout.write(`    ${line}\n`);
+    }
+    streams.stdout.write('\n');
+  }
+  return true;
+}
+
+/**
  * Run the explain workflow.
  * @param {object} options
  * @param {string} options.configPath - Path to ignorekit.json
@@ -42,12 +80,13 @@ function summarizeLines(lines) {
  */
 function runExplainWorkflow(options, env) {
   const stdout = env.stdout || process.stdout;
+  const stderr = env.stderr || process.stderr;
   const configPath = path.resolve(env.cwd || process.cwd(), options.configPath);
   const rawConfig = readJson(configPath);
   const config = normalizeProjectConfig(rawConfig);
 
-  const projectRoot = path.dirname(configPath);
-  const resolver = buildResolver({ options: { ...options, projectRoot } });
+  const projectDir = path.dirname(configPath);
+  const resolver = buildResolver({ options, projectDirHint: projectDir });
 
   // Resolve preset components and inheritance chain
   const presetComponents = config.preset
@@ -58,13 +97,18 @@ function runExplainWorkflow(options, env) {
   const extraComponents = config.components || [];
   const allComponents = [...filteredPresetComponents, ...extraComponents];
 
+  // Track component IDs that were successfully read — missing components are
+  // skipped during display and excluded from the returned component list so
+  // callers never see an ID that cannot be resolved.
+  const resolvedComponents = new Set();
+
   // Compute inheritance chain once — reused for header display and component grouping
   let chain = null;
   if (config.preset) {
     try {
       chain = resolvePresetChain(resolver, config.preset);
     } catch (err) {
-      debugError(err, 'explain.chain');
+      debugError(err, 'explain.chain', env);
       // Chain resolution failed — chain remains null
     }
   }
@@ -95,7 +139,7 @@ function runExplainWorkflow(options, env) {
         ownComponentsMap.set(presetId, own);
       }
     } catch (err) {
-      debugError(err, 'explain.preset-components');
+      debugError(err, 'explain.preset-components', env);
       // Fallback: show all under the preset name
       ownComponentsMap.set(config.preset, presetComponents);
     }
@@ -112,21 +156,7 @@ function runExplainWorkflow(options, env) {
       const label = presetId === config.preset ? `From "${presetId}":` : `From ${presetId}:`;
       stdout.write(`${label}\n`);
       for (const componentId of newIds) {
-        const content = resolver.readComponent(componentId);
-        const lines = parseSignificantLines(content);
-        const ruleCount = lines.length;
-        const summary = summarizeLines(lines);
-        const pad = 24;
-        const idPadded = componentId.padEnd(pad);
-        const countLabel = `${ruleCount} rule${ruleCount !== 1 ? 's' : ''}`;
-        stdout.write(`  ${idPadded} ${countLabel.padEnd(10)} ${summary}\n`);
-
-        if (options.verbose) {
-          for (const line of content.split('\n')) {
-            stdout.write(`    ${line}\n`);
-          }
-          stdout.write('\n');
-        }
+        printComponentDetail(componentId, resolver, options, { stdout, stderr }, resolvedComponents);
       }
       stdout.write('\n');
     }
@@ -145,21 +175,7 @@ function runExplainWorkflow(options, env) {
   if (extraComponents.length > 0) {
     stdout.write('Extra components:\n');
     for (const componentId of extraComponents) {
-      const content = resolver.readComponent(componentId);
-      const lines = parseSignificantLines(content);
-      const ruleCount = lines.length;
-      const summary = summarizeLines(lines);
-      const pad = 24;
-      const idPadded = componentId.padEnd(pad);
-      const countLabel = `${ruleCount} rule${ruleCount !== 1 ? 's' : ''}`;
-      stdout.write(`  ${idPadded} ${countLabel.padEnd(10)} ${summary}\n`);
-
-      if (options.verbose) {
-        for (const line of content.split('\n')) {
-          stdout.write(`    ${line}\n`);
-        }
-        stdout.write('\n');
-      }
+      printComponentDetail(componentId, resolver, options, { stdout, stderr }, resolvedComponents);
     }
     stdout.write('\n');
   } else if (filteredPresetComponents.length > 0) {
@@ -179,7 +195,7 @@ function runExplainWorkflow(options, env) {
   return {
     project: config.name,
     preset: config.preset || null,
-    components: allComponents,
+    components: allComponents.filter(id => resolvedComponents.has(id)),
     customCount
   };
 }

@@ -7,6 +7,19 @@ const { assertDefinitionId, resolveInside } = require('../core/path');
 const { debugError } = require('../core/debug');
 
 /**
+ * Thrown by findDefinition when no layer contains the requested component or
+ * preset. Using a custom error class lets hasComponent/hasPreset distinguish
+ * "not found" from unexpected errors (e.g. EACCES) without fragile
+ * string-matching on error.message.
+ */
+class DefinitionNotFoundError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'DefinitionNotFoundError';
+  }
+}
+
+/**
  * Compute a simple edit-distance score between two strings.
  * Returns the number of single-character edits (insert/delete/substitute)
  * needed to transform a into b. Used for "did you mean?" suggestions.
@@ -66,6 +79,11 @@ function createDefinitionResolver(options = {}) {
     options.workspaceRoot,
     options.projectRoot
   ].filter(Boolean);
+  // Capture env once at construction so debugError inside findDefinition can
+  // route to the caller's stderr stream (e.g. a test's env.stderr) rather than
+  // always falling back to process.stderr. The resolver is long-lived — env
+  // is fixed at creation, which matches the resolver's immutable-layer design.
+  const resolverEnv = options.env;
 
   function findDefinition(kind, id, extension) {
     assertDefinitionId(id);
@@ -78,7 +96,7 @@ function createDefinitionResolver(options = {}) {
         // Layer is optional; missing files are expected. DEBUG-LOG: surface
         // the file path under IGNOREKIT_DEBUG so a misconfigured root is
         // visible without changing the lookup contract.
-        debugError(err, `resolver.read.${kind}`);
+        debugError(err, `resolver.read.${kind}`, resolverEnv);
         continue;
       }
     }
@@ -91,7 +109,7 @@ function createDefinitionResolver(options = {}) {
     } else if (knownIds.length > 0) {
       message += `. Available: ${knownIds.slice(0, 5).join(', ')}${knownIds.length > 5 ? `, ... (${knownIds.length} total)` : ''}`;
     }
-    throw new Error(message);
+    throw new DefinitionNotFoundError(message);
   }
 
   function listDefinitionIds(kind, extension) {
@@ -118,7 +136,7 @@ function createDefinitionResolver(options = {}) {
         findDefinition('components', id, '.gitignore');
         return true;
       } catch (error) {
-        if (error.message.startsWith('Unknown component')) return false;
+        if (error instanceof DefinitionNotFoundError) return false;
         throw error;
       }
     },
@@ -127,7 +145,7 @@ function createDefinitionResolver(options = {}) {
         findDefinition('presets', id, '.json');
         return true;
       } catch (error) {
-        if (error.message.startsWith('Unknown preset')) return false;
+        if (error instanceof DefinitionNotFoundError) return false;
         throw error;
       }
     },
@@ -196,4 +214,4 @@ function resolvePresetChain(resolver, presetId, visited = new Set()) {
   return [...chain, presetId];
 }
 
-module.exports = { createDefinitionResolver, resolvePresetComponents, resolvePresetChain };
+module.exports = { createDefinitionResolver, resolvePresetComponents, resolvePresetChain, DefinitionNotFoundError };

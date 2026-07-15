@@ -90,4 +90,151 @@ function createConfirm(env, { prompt = DEFAULT_PROMPT } = {}) {
   });
 }
 
-module.exports = { createConfirm, interpretConfirm, isInteractive, DEFAULT_PROMPT };
+module.exports = { createConfirm, interpretConfirm, isInteractive, runWithQuestions, readAllLines, DEFAULT_PROMPT };
+
+/**
+ * Drive an interactive question/answer flow.
+ *
+ * Precedence (highest to lowest) — any higher-priority signal short-circuits
+ * the lower ones:
+ *   1. `env.ask` — a test or parent-supplied ask function drives every
+ *      prompt synchronously. This is the only signal honored under
+ *      IGNOREKIT_NONINTERACTIVE / CI, so tests can exercise prompt paths
+ *      regardless of CI mode.
+ *   2. `IGNOREKIT_NONINTERACTIVE` / `CI` — refuse to open readline at all;
+ *      every ask() resolves with null and the caller decides what to do.
+ *   3. `stdin.isTTY === false` (piped input) — drain the stream into a
+ *      line buffer and serve the buffered lines one-per-ask.
+ *   4. Real TTY — full readline interaction with queued-line buffering.
+ *
+ * @param {object} env - { stdin, stdout, stderr, ask }
+ * @param {(ask: (prompt: string) => Promise<string|null>) => Promise<T>} operation
+ * @returns {Promise<T>}
+ */
+async function runWithQuestions(env, operation) {
+  if (env.ask) {
+    return operation(prompt => Promise.resolve(env.ask(prompt)));
+  }
+
+  const stdin = env.stdin || process.stdin;
+  const stdout = env.stdout || process.stdout;
+  const stderr = env.stderr || process.stderr;
+
+  // CI / IGNOREKIT_NONINTERACTIVE cannot answer an interactive prompt at all.
+  // Returning a no-op ask() that resolves with null signals "we gave up" —
+  // callers (e.g. the preset picker) translate null into a stderr message
+  // and exit non-zero rather than hanging forever.
+  if (process.env.IGNOREKIT_NONINTERACTIVE || process.env.CI) {
+    const reason = process.env.IGNOREKIT_NONINTERACTIVE ? 'IGNOREKIT_NONINTERACTIVE' : 'CI';
+    stderr.write(`Interactive prompt skipped (${reason} set).\n`);
+    function noop() {
+      return Promise.resolve(null);
+    }
+    return operation(noop);
+  }
+
+  // Piped (non-TTY) input: drain the entire stream into a buffer first so we
+  // can serve the buffered lines one-per-ask without racing readline's async
+  // delivery. Without this, line events can land in queuedLines out of order
+  // with pendingQuestions resolution and silently drop the lines that arrive
+  // after ask() is called but before the next event loop tick.
+  if (!stdin || stdin.isTTY === false || stdin.isTTY === undefined) {
+    const lines = await readAllLines(stdin);
+    let cursor = 0;
+    function ask(prompt) {
+      stdout.write(prompt);
+      if (cursor < lines.length) return Promise.resolve(lines[cursor++]);
+      // Past the drained stream: blank answers. The operation decides what an
+      // empty response means in its own context (interpret as "no", or fall
+      // through to a default).
+      return Promise.resolve('');
+    }
+    return operation(ask);
+  }
+
+  // TTY: real readline interaction. Each ask() waits for one line; queued
+  // lines from input already buffered are served first.
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+  const queuedLines = [];
+  const pendingQuestions = [];
+  let closed = false;
+
+  rl.on('line', line => {
+    const pending = pendingQuestions.shift();
+    if (pending) pending(line);
+    else queuedLines.push(line);
+  });
+  rl.on('close', () => {
+    closed = true;
+    while (pendingQuestions.length > 0) pendingQuestions.shift()('');
+  });
+
+  function ask(prompt) {
+    stdout.write(prompt);
+    if (queuedLines.length > 0) return Promise.resolve(queuedLines.shift());
+    if (closed) return Promise.resolve('');
+    return new Promise(resolve => pendingQuestions.push(resolve));
+  }
+
+  try {
+    return await operation(ask);
+  } finally {
+    rl.close();
+  }
+}
+
+/**
+ * Read every line from a (non-TTY) stream into an array.
+ *
+ * Two failure modes the original implementation missed:
+ *
+ *  - Some streams (PassThrough in tests, parent processes that pipe one-shot
+ *    answers) emit 'close' without ever firing 'end'. Listening only to 'end'
+ *    leaves the promise pending forever; also listen to 'close' and resolve
+ *    with whatever was buffered.
+ *  - Caller-owned streams that are paused will not deliver data until resumed.
+ *    Calling `stream.resume()` here is safe for already-flowing streams
+ *    (resume() is a no-op when the stream is not paused) and unblocks paused
+ *    streams that were passed in by a test harness.
+ *
+ *  Lines are stripped of trailing `\r` so CRLF input (`a\r\nb\r\n`) is treated
+ *  identically to LF input (`a\nb\n`).
+ *
+ * @param {NodeJS.ReadableStream} stream
+ * @returns {Promise<string[]>}
+ */
+function readAllLines(stream) {
+  return new Promise((resolve, reject) => {
+    if (!stream || typeof stream.on !== 'function') {
+      resolve([]);
+      return;
+    }
+    const lines = [];
+    let buf = '';
+    let settled = false;
+    function finish() {
+      if (settled) return;
+      settled = true;
+      if (buf.length > 0) lines.push(buf.replace(/\r+$/, ''));
+      resolve(lines);
+    }
+    stream.setEncoding('utf8');
+    if (typeof stream.resume === 'function') stream.resume();
+    stream.on('data', chunk => {
+      buf += chunk;
+      const parts = buf.split('\n');
+      // Keep the tail (after the last \n) in the buffer for the next chunk;
+      // push every completed line immediately, stripping terminal \r so CRLF
+      // and LF input produce identical output.
+      buf = parts.pop();
+      for (const line of parts) lines.push(line.replace(/\r+$/, ''));
+    });
+    stream.on('end', finish);
+    stream.on('close', finish);
+    stream.on('error', err => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
+  });
+}
