@@ -1,5 +1,7 @@
 'use strict';
 
+const { validateProviderConfig } = require('../core/constants');
+
 function normalizeStringArray(value, field) {
   if (value === undefined) {
     return [];
@@ -31,8 +33,9 @@ function normalizeProjectConfig(input) {
   if (!provider.name || typeof provider.name !== 'string') {
     throw new Error('provider.name is required');
   }
-  if (provider.name !== 'local' && !Array.isArray(provider.templates)) {
-    throw new Error('provider.templates must be an array');
+  const validationErrors = validateProviderConfig(provider);
+  if (validationErrors.length > 0) {
+    throw new Error(validationErrors.join('; '));
   }
 
   return {

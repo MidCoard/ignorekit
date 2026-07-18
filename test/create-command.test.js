@@ -26,6 +26,77 @@ function trackUserRootFiles(paths) {
   };
 }
 
+test('create preset refuses to overwrite an existing preset without --overwrite', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    // Create a preset first
+    const firstResult = await runCli([
+      'create', 'preset', 'existing-preset', '--component', 'language/node',
+      '--yes', '--output-root', workspace.path('defs')
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+    assert.equal(firstResult.exitCode, 0);
+
+    // Attempt to create the same preset without --overwrite — must fail
+    const errors = [];
+    const secondResult = await runCli([
+      'create', 'preset', 'existing-preset', '--component', 'language/java',
+      '--yes', '--output-root', workspace.path('defs')
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: (text) => errors.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    assert.equal(secondResult.exitCode, 1);
+    assert.match(errors.join(''), /already exists.*--overwrite/i);
+
+    // The original preset must be unchanged
+    const preset = JSON.parse(fs.readFileSync(workspace.path('defs/presets/existing-preset.json'), 'utf8'));
+    assert.deepEqual(preset.components, ['language/node'],
+      'original preset must not be overwritten');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('create preset --overwrite replaces an existing preset', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    // Create a preset first
+    const firstResult = await runCli([
+      'create', 'preset', 'replaceable-preset', '--component', 'language/node',
+      '--yes', '--output-root', workspace.path('defs')
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+    assert.equal(firstResult.exitCode, 0);
+
+    // Overwrite with --overwrite
+    const secondResult = await runCli([
+      'create', 'preset', 'replaceable-preset', '--component', 'language/java',
+      '--overwrite', '--yes', '--output-root', workspace.path('defs')
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(secondResult.exitCode, 0);
+    // The preset must be replaced with the new content
+    const preset = JSON.parse(fs.readFileSync(workspace.path('defs/presets/replaceable-preset.json'), 'utf8'));
+    assert.deepEqual(preset.components, ['language/java'],
+      'preset should be overwritten with new components');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('create component keeps category separate from the component name', async () => {
   const workspace = createTempWorkspace();
   try {

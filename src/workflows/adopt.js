@@ -43,7 +43,7 @@ async function runAdoptWorkflow(options, env) {
     throw new Error(`Project path does not exist: ${projectPath}`);
   }
   if (options.removeCached && !options.apply) {
-    throw new Error('--remove-cached requires --apply so cached file removal uses the generated .gitignore');
+    throw new Error('--remove-cached requires --apply (which writes .gitignore and ignorekit.json) so cached file removal uses the generated .gitignore');
   }
 
   const distRoot = options.distRoot || DIST_ROOT;
@@ -64,7 +64,14 @@ async function runAdoptWorkflow(options, env) {
   }
 
   // Create resolver once — reused throughout
-  const resolver = buildResolver({ options, projectDirHint: projectPath });
+  const resolver = buildResolver({ options, env, projectDirHint: projectPath });
+
+  // Validate the preset BEFORE any analysis or preview. A missing preset must
+  // error immediately — showing "Analyzing existing .gitignore" and "Preset
+  // will add N components" for a preset that doesn't exist is misleading.
+  // The resolved components are cached for reuse in the analysis comparison
+  // and custom-rule carry-forward below.
+  const presetComponents = resolvePresetComponents(resolver, options.preset);
 
   // Analyze existing .gitignore if present.
   // The analysis can fail for pathological inputs (e.g. a .gitignore past the
@@ -109,52 +116,48 @@ async function runAdoptWorkflow(options, env) {
         stdout.write('\n');
       }
 
-      // Compare chosen preset against analysis
-      try {
-        const presetComponents = resolvePresetComponents(resolver, options.preset);
+      // Compare chosen preset against analysis. The preset was already
+      // validated above (before the analysis section), so presetComponents
+      // is guaranteed to be resolved.
 
-        // Find components in the preset that are NOT already fully present in the
-        // current .gitignore. A 'full' classification only means >=80% overlap, so a
-        // component can be classified full yet still have rules the preset would add;
-        // treat a component as already covered only when every one of its rules is
-        // present (matched.length === total).
-        const newComponents = presetComponents.filter(id => {
-          const match = analysis.matchedComponents.find(c => c.id === id);
-          return !match || match.matched.length < match.total;
-        });
+      // Find components in the preset that are NOT already fully present in the
+      // current .gitignore. A 'full' classification only means >=80% overlap, so a
+      // component can be classified full yet still have rules the preset would add;
+      // treat a component as already covered only when every one of its rules is
+      // present (matched.length === total).
+      const newComponents = presetComponents.filter(id => {
+        const match = analysis.matchedComponents.find(c => c.id === id);
+        return !match || match.matched.length < match.total;
+      });
 
-        // Find matched components NOT in the chosen preset (will be lost if not in custom)
-        const presetSet = new Set(presetComponents);
-        const lostComponents = analysis.matchedComponents.filter(c => c.classification === 'full' && !presetSet.has(c.id));
+      // Find matched components NOT in the chosen preset (will be lost if not in custom)
+      const presetSet = new Set(presetComponents);
+      const lostComponents = analysis.matchedComponents.filter(c => c.classification === 'full' && !presetSet.has(c.id));
 
-        if (newComponents.length > 0) {
-          stdout.write(`Preset "${options.preset}" will add ${newComponents.length} new component(s):\n`);
-          for (const id of newComponents) {
-            stdout.write(`  ${id}\n`);
-          }
-          stdout.write('\n');
+      if (newComponents.length > 0) {
+        stdout.write(`Preset "${options.preset}" will add ${newComponents.length} new component(s):\n`);
+        for (const id of newComponents) {
+          stdout.write(`  ${id}\n`);
         }
+        stdout.write('\n');
+      }
 
-        if (lostComponents.length > 0) {
-          const lostWarning = `Current .gitignore has rules from ${lostComponents.length} component(s) not in preset "${options.preset}":`;
-          warnings.push(lostWarning);
-          stdout.write(`⚠ ${lostWarning}\n`);
-          for (const comp of lostComponents) {
-            stdout.write(`  ${comp.id} (${comp.total} rules)\n`);
-            warnings.push(`  ${comp.id}: ${comp.total} rules will not be in generated .gitignore unless added as extra components`);
-          }
-          stdout.write('  Add them as extra components in ignorekit.json if needed.\n\n');
+      if (lostComponents.length > 0) {
+        const lostWarning = `Current .gitignore has rules from ${lostComponents.length} component(s) not in preset "${options.preset}":`;
+        warnings.push(lostWarning);
+        stdout.write(`⚠ ${lostWarning}\n`);
+        for (const comp of lostComponents) {
+          stdout.write(`  ${comp.id} (${comp.total} rules)\n`);
+          warnings.push(`  ${comp.id}: ${comp.total} rules will not be in generated .gitignore unless added as extra components`);
         }
+        stdout.write('  Add them as extra components in ignorekit.json if needed.\n\n');
+      }
 
-        // Check if the chosen preset is the best match
-        if (analysis.bestPreset && analysis.bestPreset.id !== options.preset) {
-          const suggestion = `Analysis suggests preset "${analysis.bestPreset.id}" (score: ${analysis.bestPreset.score}) may be a better match than "${options.preset}".`;
-          warnings.push(suggestion);
-          stdout.write(`💡 ${suggestion}\n\n`);
-        }
-      } catch (err) {
-        debugError(err, 'adopt.preset', env);
-        // Preset not found — will error below when config is built
+      // Check if the chosen preset is the best match
+      if (analysis.bestPreset && analysis.bestPreset.id !== options.preset) {
+        const suggestion = `Analysis suggests preset "${analysis.bestPreset.id}" (score: ${analysis.bestPreset.score}) may be a better match than "${options.preset}".`;
+        warnings.push(suggestion);
+        stdout.write(`💡 ${suggestion}\n\n`);
       }
     }
   }
@@ -163,16 +166,10 @@ async function runAdoptWorkflow(options, env) {
   const config = buildProjectConfig(path.basename(projectPath), options);
 
   // Keep only rules that the chosen preset and extra components do not cover.
+  // resolvePresetComponents errors propagate before the config is built — a
+  // missing preset must not silently produce wrong custom rules.
   if (analysis) {
-    const selectedComponentIds = new Set(options.components || []);
-    try {
-      for (const id of resolvePresetComponents(resolver, options.preset)) {
-        selectedComponentIds.add(id);
-      }
-    } catch (err) {
-      debugError(err, 'adopt.preset-components', env);
-      // The generator reports invalid presets with its usual error message.
-    }
+    const selectedComponentIds = new Set([...(options.components || []), ...presetComponents]);
     // Build the covered-rule set using trimmed keys so that whitespace
     // differences between the component file and the user's .gitignore do
     // not prevent a match. A rule like "logs/" in the component covers
@@ -218,6 +215,12 @@ async function runAdoptWorkflow(options, env) {
   // The --apply flag is the safety gate that turns the preview into actual
   // writes. This matches the documented contract: "adopt writes directly to
   // .gitignore" only when the user explicitly opts in with --apply.
+  //
+  // Preview mode returns exit code 0 because the command succeeded at its
+  // stated purpose (showing the user what would change). Exit 1 is reserved
+  // for errors and user cancellations, not for "no files written" which is
+  // the expected outcome of a dry run. The `preview: true` field in the
+  // return value lets programmatic callers distinguish preview from write.
   if (!options.apply) {
     stdout.write('Preview mode — no files written. Use --apply to write.\n');
     return { projectPath, configPath: null, cachedRemoval: { action: 'skipped', files: [] }, analysis, warnings, preview: true };
@@ -247,6 +250,13 @@ async function runAdoptWorkflow(options, env) {
   }
 
   writeJson(configPath, config);
+  // Non-atomic write: a crash between these two writes could leave an
+  // ignorekit.json pointing to an unwritten .gitignore. This is acceptable
+  // because (a) the backup preserves the user's original .gitignore, and
+  // (b) re-running adopt restores the correct state. An atomic
+  // write-to-temp-then-rename would add filesystem-specific complexity
+  // (Windows doesn't support rename over an existing file) for a scenario
+  // that is both rare and recoverable.
   fs.writeFileSync(gitignorePath, gitignore, 'utf8');
 
   stdout.write(`Generated .gitignore\n`);

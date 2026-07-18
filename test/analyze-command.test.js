@@ -4,7 +4,8 @@ const assert = require('assert');
 const path = require('path');
 const test = require('node:test');
 const { createTempWorkspace } = require('./helpers/temp-workspace');
-const { runAnalyzeWorkflow, parseSignificantLines, matchComponent, classifyMatch, scorePreset } = require('../src/workflows/analyze');
+const { runAnalyzeWorkflow, matchComponent, classifyMatch, scorePreset } = require('../src/workflows/analyze');
+const { parseSignificantLines } = require('../src/core/text');
 
 test('analyze reads the source .gitignore only once', () => {
   const workspace = createTempWorkspace();
@@ -391,7 +392,7 @@ test('scorePreset with line coverage: preset covering more lines wins', () => {
 // --- #1: normalizePattern must trim whitespace for matching ---
 
 test('normalizePattern trims leading and trailing whitespace so patterns match regardless of padding', () => {
-  const { normalizePattern } = require('../src/workflows/analyze');
+  const { normalizePattern } = require('../src/core/text');
   // Patterns with leading/trailing whitespace must normalize to the same key
   // as their trimmed form, so matching is not broken by whitespace differences.
   assert.equal(normalizePattern('  node_modules/'), 'node_modules/',

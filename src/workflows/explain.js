@@ -14,8 +14,10 @@ const { debugError } = require('../core/debug');
  * @returns {string}
  */
 function summarizeLines(lines) {
-  const negations = lines.filter(l => l.startsWith('!'));
-  const patterns = lines.filter(l => !l.startsWith('!'));
+  // Leading whitespace is insignificant in gitignore syntax — use trimStart()
+  // to detect negation patterns after whitespace, matching detectNegationPatterns.
+  const negations = lines.filter(l => l.trimStart().startsWith('!'));
+  const patterns = lines.filter(l => !l.trimStart().startsWith('!'));
   if (negations.length === 0) {
     if (patterns.length <= 3) return patterns.join(', ');
     return `${patterns.slice(0, 2).join(', ')}, ...`;
@@ -86,7 +88,7 @@ function runExplainWorkflow(options, env) {
   const config = normalizeProjectConfig(rawConfig);
 
   const projectDir = path.dirname(configPath);
-  const resolver = buildResolver({ options, projectDirHint: projectDir });
+  const resolver = buildResolver({ options, env, projectDirHint: projectDir });
 
   // Resolve preset components and inheritance chain
   const presetComponents = config.preset

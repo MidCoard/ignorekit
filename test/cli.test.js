@@ -1070,3 +1070,135 @@ test('create component interactive flow passes stderr to chooseRulesSmart', asyn
     workspace.cleanup();
   }
 });
+
+// --- #2 (P1): create command runWithQuestions must receive constructed env, not raw env ---
+
+test('create component interactive flow passes env.ask to runWithQuestions', async () => {
+  // The create command's interactive path called runWithQuestions(env, ...) with
+  // the raw env from runCli. The fix routes a properly constructed env (with
+  // stdout, stderr, cwd, stdin, ask) to runWithQuestions, matching the pattern
+  // used by buildPickerEnv for init/adopt. This test verifies that env.ask
+  // reaches runWithQuestions in the create component path.
+  const workspace = createTempWorkspace();
+  try {
+    const fakeUserRoot = path.join(workspace.root, 'fake-user');
+    fs.mkdirSync(path.join(fakeUserRoot, 'components'), { recursive: true });
+
+    let askCalled = false;
+    const answers = [
+      'local',                         // category
+      'ask-routing-test',              // name
+      '',                              // source .gitignore (empty = skip)
+      'my-rule',                       // inline rule
+      '',                              // end inline rules
+    ];
+
+    const result = await runCli([
+      'create', 'component',
+      '--user-root', fakeUserRoot,
+      '--output-root', fakeUserRoot,
+      '--dist-root', workspace.path('dist'),
+      '--yes'
+    ], {
+      ask: async (prompt) => {
+        askCalled = true;
+        return answers.shift() || '';
+      },
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.ok(askCalled, 'env.ask should be called by runWithQuestions in create component path');
+    assert.equal(result.exitCode, 0, 'create component should succeed with env.ask');
+    const userFile = path.join(fakeUserRoot, 'components', 'local', 'ask-routing-test.gitignore');
+    assert.ok(fs.existsSync(userFile), `Expected file at ${userFile}`);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('create preset interactive flow passes env.ask to runWithQuestions', async () => {
+  // Same as above but for the preset subcommand.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeJson('dist/presets/base.json', { name: 'base', components: [] });
+    const fakeUserRoot = path.join(workspace.root, 'fake-user');
+    fs.mkdirSync(path.join(fakeUserRoot, 'components'), { recursive: true });
+
+    let askCalled = false;
+    const answers = [
+      'ask-preset-test',               // name
+      '0',                             // base preset (0 = no base)
+      '',                              // no components
+    ];
+
+    const result = await runCli([
+      'create', 'preset',
+      '--user-root', fakeUserRoot,
+      '--output-root', fakeUserRoot,
+      '--dist-root', workspace.path('dist'),
+      '--yes'
+    ], {
+      ask: async (prompt) => {
+        askCalled = true;
+        return answers.shift() || '';
+      },
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.ok(askCalled, 'env.ask should be called by runWithQuestions in create preset path');
+    assert.equal(result.exitCode, 0, 'create preset should succeed with env.ask');
+    const presetFile = path.join(fakeUserRoot, 'presets', 'ask-preset-test.json');
+    assert.ok(fs.existsSync(presetFile), `Expected file at ${presetFile}`);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('create component interactive flow uses constructed env stdin for runWithQuestions', async () => {
+  // When env.ask is NOT provided, runWithQuestions falls back to stdin-based
+  // input. The fix ensures the constructed env (with stdin) is passed to
+  // runWithQuestions rather than the raw env, so piped stdin works correctly.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    const fakeUserRoot = path.join(workspace.root, 'fake-user');
+    fs.mkdirSync(path.join(fakeUserRoot, 'components'), { recursive: true });
+
+    const { PassThrough } = require('stream');
+    const stdin = new PassThrough();
+    stdin.isTTY = false;
+
+    // Feed answers for the interactive component creation:
+    // category, name, source .gitignore (empty = skip), rule, blank-to-end
+    setImmediate(() => {
+      stdin.write('local\n');
+      stdin.write('piped-input-test\n');
+      stdin.write('\n');   // no source file
+      stdin.write('my-rule\n');
+      stdin.write('\n');   // end inline rules
+      stdin.end();
+    });
+
+    const result = await runCli([
+      'create', 'component',
+      '--user-root', fakeUserRoot,
+      '--output-root', fakeUserRoot,
+      '--dist-root', workspace.path('dist')
+    ], {
+      stdin,
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0, 'create component should succeed with piped stdin');
+    const userFile = path.join(fakeUserRoot, 'components', 'local', 'piped-input-test.gitignore');
+    assert.ok(fs.existsSync(userFile), `Expected file at ${userFile}`);
+  } finally {
+    workspace.cleanup();
+  }
+});

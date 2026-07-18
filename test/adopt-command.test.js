@@ -680,3 +680,105 @@ test('adopt skips backup when .gitignore.bak already exists and preserves the or
     workspace.cleanup();
   }
 });
+
+// --- #3 (P0): adopt must propagate resolvePresetComponents errors instead of
+//     silently swallowing them and writing wrong custom rules ---
+
+test('adopt propagates preset-not-found error from analysis comparison (no silent swallow)', async () => {
+  // When the preset does not exist, the adopt workflow used to catch the
+  // resolvePresetComponents error in the analysis comparison block and
+  // silently continue — then later the generator would also silently skip
+  // the missing preset, producing a .gitignore with no preset content.
+  // The catch block must be removed so the error propagates immediately.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    // No preset file for 'nonexistent' — resolvePresetComponents must throw
+    workspace.writeText('project/.gitignore', 'logs/\ncustom-rule/\n');
+
+    const errors = [];
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'nonexistent',
+      '--dist-root', workspace.path('dist'), '--apply'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: (text) => errors.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 1, 'adopt must fail when preset does not exist');
+    assert.match(errors.join(''), /Unknown preset.*nonexistent|nonexistent/,
+      'error must mention the missing preset');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('adopt with nonexistent preset errors immediately without writing files', async () => {
+  // A nonexistent preset must error before any config or .gitignore is written.
+  // Previously the two catch blocks let the workflow continue past the
+  // resolution errors and write a config with an invalid preset name.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeText('project/.gitignore', 'logs/\ncustom-rule/\n');
+
+    const errors = [];
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'missing-preset',
+      '--dist-root', workspace.path('dist'), '--apply'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: (text) => errors.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 1, 'must fail when preset is missing');
+    // No config or .gitignore should be written
+    assert.equal(fs.existsSync(workspace.path('project/ignorekit.json')), false,
+      'config must not be written when preset resolution fails');
+    assert.match(errors.join(''), /Unknown preset.*missing-preset|missing-preset/,
+      'error must identify the missing preset');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('adopt validates preset before showing analysis or preview output', async () => {
+  // When a nonexistent preset is used with an existing .gitignore, the error
+  // must fire BEFORE the analysis output ("Analyzing existing .gitignore",
+  // "Rules needing review") and BEFORE the preview ("--- Preview ---").
+  // Showing analysis/preview for a preset that will ultimately fail is
+  // misleading — the user sees "Preset will add N components" only to learn
+  // the preset doesn't exist.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeText('project/.gitignore', 'logs/\ncustom-rule/\n');
+
+    const stdoutLines = [];
+    const errors = [];
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'nonexistent-preset',
+      '--dist-root', workspace.path('dist')
+    ], {
+      stdout: { write: text => stdoutLines.push(String(text)) },
+      stderr: { write: text => errors.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 1, 'must fail when preset does not exist');
+    const out = stdoutLines.join('');
+    // The preset validation must fire before any analysis or preview output.
+    assert.doesNotMatch(out, /Analyzing existing/,
+      'must not show analysis output for an invalid preset');
+    assert.doesNotMatch(out, /--- Preview ---/,
+      'must not show preview for an invalid preset');
+    assert.doesNotMatch(out, /Preset "nonexistent-preset" will add/,
+      'must not show preset-vs-analysis output for an invalid preset');
+    assert.match(errors.join(''), /nonexistent-preset/,
+      'error must identify the missing preset');
+  } finally {
+    workspace.cleanup();
+  }
+});

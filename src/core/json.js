@@ -3,12 +3,34 @@
 const fs = require('fs');
 const path = require('path');
 const { debugError } = require('./debug');
+const { MAX_CONTENT_BYTES } = require('./constants');
+
+/**
+ * Check file size before reading. Files larger than MAX_CONTENT_BYTES are
+ * rejected to prevent memory exhaustion from pathological inputs (e.g. a
+ * corrupted 10 GiB JSON that readFileSync would buffer entirely before
+ * JSON.parse even runs). Real config and preset files are a few KiB.
+ *
+ * @param {string} filePath
+ * @throws {Error} If the file exceeds MAX_CONTENT_BYTES
+ */
+function checkSize(filePath) {
+  const stat = fs.statSync(filePath);
+  if (stat.size > MAX_CONTENT_BYTES) {
+    const err = new Error(`File too large (${stat.size} bytes > ${MAX_CONTENT_BYTES}): ${filePath}`);
+    err.code = 'EFILETOOLARGE';
+    throw err;
+  }
+}
 
 function readJson(filePath) {
   try {
+    checkSize(filePath);
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
   } catch (error) {
-    throw new Error(`Failed to read JSON ${filePath}: ${error.message}`);
+    const wrapped = new Error(`Failed to read JSON ${filePath}: ${error.message}`);
+    if (error.code) wrapped.code = error.code;
+    throw wrapped;
   }
 }
 
@@ -33,9 +55,17 @@ function readJson(filePath) {
  */
 function readJsonOrNull(filePath, env) {
   try {
+    checkSize(filePath);
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
   } catch (err) {
     if (err && err.code === 'ENOENT') return null;
+    // Size-guard errors indicate a file that is likely corrupted or malicious.
+    // Returning null would silently mask the problem — the caller would proceed
+    // without data and never know the file was rejected for being oversized.
+    // Re-throw so the caller can surface the issue immediately.
+    // Detection uses err.code rather than string-matching the message so that
+    // changing the error format in checkSize doesn't silently break this check.
+    if (err && err.code === 'EFILETOOLARGE') throw err;
     // Non-ENOENT errors (EACCES, SyntaxError from invalid JSON, etc.) are
     // unexpected — surface them under IGNOREKIT_DEBUG so the user can diagnose
     // permission issues or corrupt config files, but still return null to

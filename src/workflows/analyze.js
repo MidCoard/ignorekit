@@ -137,6 +137,14 @@ function scorePreset(presetComponents, componentResults, totalInputLines = 0) {
 
 /**
  * Core analysis logic — no side effects. Reusable by extract and adopt.
+ *
+ * Deferred: this function handles size guarding, line parsing, component
+ * matching, classification, preset scoring, and result assembly in a single
+ * body. Extracting sub-functions (e.g. matchAllComponents, scoreAllPresets)
+ * would improve readability, but the current structure is correct and
+ * well-commented. Revisit if a third caller needs a subset of the analysis
+ * pipeline, which would make the extraction clearly worthwhile.
+ *
  * @param {object} options
  * @param {string} options.gitignorePath - Path to the .gitignore file
  * @param {string} options.distRoot - Dist root for definitions
@@ -183,7 +191,7 @@ function analyzeGitignore(options, env) {
   const totalInputLines = inputLines.length;
 
   const distRoot = options.distRoot || DIST_ROOT;
-  const resolver = buildResolver({ options, projectDirHint: projectPath });
+  const resolver = buildResolver({ options, env, projectDirHint: projectPath });
   const signalByPreset = new Map(
     detectProjectSignals(projectPath, env).map(signal => [signal.preset, signal])
   );
@@ -382,13 +390,4 @@ function runAnalyzeWorkflow(options, env) {
   };
 }
 
-// Re-export normalizePattern and parseSignificantLines from core/text for
-// backward compatibility. These utilities belong in core/text.js (the correct
-// layer for pure text operations), not in a workflow module. No production
-// code imports them from here anymore — only test files reference these
-// re-exports. Import from core/text.js directly instead.
-//
-// @deprecated Import parseSignificantLines and normalizePattern from
-// '../core/text' (or '../../core/text' from test files) instead of from
-// this module. The re-exports will be removed in a future major version.
-module.exports = { runAnalyzeWorkflow, analyzeGitignore, parseSignificantLines, normalizePattern, matchComponent, classifyMatch, scorePreset };
+module.exports = { runAnalyzeWorkflow, analyzeGitignore, matchComponent, classifyMatch, scorePreset };

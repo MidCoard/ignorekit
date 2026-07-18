@@ -69,7 +69,7 @@ async function runInitWorkflow(options, env) {
     }
   }
 
-  const resolver = buildResolver({ options, projectDirHint: projectPath });
+  const resolver = buildResolver({ options, env, projectDirHint: projectPath });
   const gitignore = await generateGitignore({ config, resolver, env });
 
   // Show preview in console before writing, matching the adopt workflow pattern.

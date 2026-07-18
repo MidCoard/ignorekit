@@ -14,7 +14,7 @@ function assertDefinitionId(id) {
   // Reject ids beginning with a dot so callers cannot define a component whose
   // name collides with hidden system directories (e.g. ".git", ".idea").
   // The regex allows dots within segments (e.g. "framework/next.js"), which
-  // means "category/..hidden" passes the `..` check but creates a hidden
+  // means "category/.hidden" passes the `..` check but creates a hidden
   // directory. This is accepted as a defense-in-depth trade-off: the `..`
   // check blocks path traversal, and hidden-directory creation requires write
   // access to the definitions root (already a trusted operation). Tightening

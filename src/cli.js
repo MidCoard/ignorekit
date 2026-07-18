@@ -169,6 +169,12 @@ Options:
   --exclude <id>         Exclude a component from the chosen preset (repeatable)
   --template <name>      Add a gitignore.io template (repeatable, requires --provider gitignore.io)
   --provider <name>      Provider name: local (default) or gitignore.io
+
+  The gitignore.io provider fetches templates from an external service. The
+  generated .gitignore is checked for negation patterns (lines starting with
+  !) and patterns matching common secret filenames; warnings are printed when
+  found. Review external content before committing.
+
   --git                  Run git init in the project directory
   --no-git               Skip git init (default)
   --overwrite            Replace existing ignorekit.json and .gitignore
@@ -203,6 +209,12 @@ Options:
   --exclude <id>         Exclude a component from the chosen preset (repeatable)
   --template <name>      Add a gitignore.io template (repeatable, requires --provider gitignore.io)
   --provider <name>      Provider name: local (default) or gitignore.io
+
+  The gitignore.io provider fetches templates from an external service. The
+  generated .gitignore is checked for negation patterns (lines starting with
+  !) and patterns matching common secret filenames; warnings are printed when
+  found. Review external content before committing.
+
   --apply                Write .gitignore and ignorekit.json (without this, preview only)
   --overwrite-config     Overwrite an existing ignorekit.json
   --remove-cached        Remove Git-tracked files that should be ignored
@@ -257,6 +269,7 @@ Preset options:
   --base <name>           Base preset to extend
   --component <id>        Include a component (repeatable)
   --output-root <path>    Definition root (default: ~/.ignorekit)
+  --overwrite             Replace an existing preset
   --yes                   Skip the confirmation prompt before writing
 
   Before writing, a preview is shown and you are asked to confirm.
@@ -362,9 +375,9 @@ function commandList(args, env) {
 
 // --- Generate command ---
 
-function createResolverFromOptions(options, configPath) {
+function createResolverFromOptions(options, configPath, env) {
   const projectRoot = path.dirname(path.resolve(configPath));
-  return buildResolver({ options, projectDirHint: projectRoot });
+  return buildResolver({ options, env, projectDirHint: projectRoot });
 }
 
 async function commandGenerate(args, env) {
@@ -381,7 +394,7 @@ async function commandGenerate(args, env) {
   } catch (err) {
     throw new Error(`Invalid config ${absoluteConfigPath}: ${err.message}`);
   }
-  const resolver = createResolverFromOptions(options, absoluteConfigPath);
+  const resolver = createResolverFromOptions(options, absoluteConfigPath, env);
   const content = await generateGitignore({ config, resolver, env });
   const outputPath = path.resolve(path.dirname(absoluteConfigPath), options.output || '.gitignore');
   fs.writeFileSync(outputPath, content, 'utf8');
@@ -434,7 +447,7 @@ async function pickPresetInteractive(options, env) {
   }
 
   // List all presets for the user to pick
-  const resolver = buildResolver({ options, projectDirHint: projectPath });
+  const resolver = buildResolver({ options, env, projectDirHint: projectPath });
   const presetIds = resolver.listPresets();
   if (presetIds.length === 0) {
     stdout.write('No presets available.\n');
@@ -672,12 +685,17 @@ async function runCli(args, env = {}) {
     if (command === 'create') {
       const subcommand = args[1];
       let options = applyUserRootDefault(parseArgs(args.slice(2)));
-      const createEnv = buildCreateEnv(env, options.yes);
+      // Route through buildCreateEnv with the same explicit env construction
+      // as init and adopt, so the create command gets a consistent env shape
+      // (stdout, stderr, cwd, stdin, ask) rather than the raw env object which
+      // may carry extra properties or miss expected ones.
+      const createEnv = buildCreateEnv({ stdout, stderr, cwd: env.cwd, stdin: env.stdin, ask: env.ask }, options.yes);
       if (subcommand === 'component') {
         options.name = options._[0];
         options.rules = collectRepeated(args.slice(2), '--rule');
         if (!options.name) {
-          const draft = await runWithQuestions(env, ask => promptComponentCreation(options, {
+          const interactiveEnv = { stdin: env.stdin, stdout, stderr, cwd: env.cwd, ask: env.ask };
+          const draft = await runWithQuestions(interactiveEnv, ask => promptComponentCreation(options, {
             cwd: env.cwd || process.cwd(), stdout, stderr, ask
           }));
           if (!draft) return { exitCode: 1 };
@@ -690,7 +708,8 @@ async function runCli(args, env = {}) {
         options.name = options._[0];
         options.components = collectRepeated(args.slice(2), '--component');
         if (!options.name) {
-          const draft = await runWithQuestions(env, ask => promptPresetCreation(options, {
+          const interactiveEnv = { stdin: env.stdin, stdout, stderr, cwd: env.cwd, ask: env.ask };
+          const draft = await runWithQuestions(interactiveEnv, ask => promptPresetCreation(options, {
             cwd: env.cwd || process.cwd(), stdout, stderr, ask
           }));
           if (!draft) return { exitCode: 1 };

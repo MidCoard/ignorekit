@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const { writeJson } = require('../core/json');
 const { assertDefinitionId, resolveInside, USER_ROOT } = require('../core/path');
@@ -15,6 +16,7 @@ const { assertDefinitionId, resolveInside, USER_ROOT } = require('../core/path')
  * @param {string} [options.base] - Base preset to extend
  * @param {string[]} [options.components] - Components to include
  * @param {string} [options.outputRoot] - Output directory (default: ~/.ignorekit)
+ * @param {boolean} [options.overwrite] - Replace an existing preset
  * @param {object} env
  * @param {object} env.stdout - Writable stream for output
  * @param {string} [env.cwd] - Current working directory
@@ -38,6 +40,14 @@ async function runPresetCreate(options, env) {
     stderr.write(`      Pass --output-root to write somewhere else.\n`);
   }
   const outputPath = resolveInside(outputRoot, path.join('presets', `${options.name}.json`));
+  // The overwrite guard fires before the preview, matching the component
+  // workflow's guard order. A user who already has a preset on disk should
+  // learn "already exists" first; showing a preview only to throw on a
+  // file-exists check at the end is wasted work and produces misleading
+  // output. The guard is symmetric with component's --overwrite flag.
+  if (fs.existsSync(outputPath) && !options.overwrite) {
+    throw new Error(`Preset already exists: ${outputPath}. Use --overwrite to replace it.`);
+  }
   const components = Array.isArray(options.components) ? options.components : [];
   const preset = {
     name: options.name,

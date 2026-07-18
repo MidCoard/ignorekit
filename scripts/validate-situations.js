@@ -11,6 +11,7 @@ const presetsDir = path.join(repoRoot, 'presets');
 
 const { listDefinitions: listDefinitionsArray } = require('../src/core/fs');
 const { readJson } = require('../src/core/json');
+const { validateProviderConfig } = require('../src/core/constants');
 
 const workflows = new Set(['init', 'adopt', 'generate']);
 // v0.6.4 implements only one addon: ensureGitRepo, used by init/adopt to
@@ -19,7 +20,6 @@ const workflows = new Set(['init', 'adopt', 'generate']);
 // creation is unconditional and cached-file removal is exposed via the
 // `--remove-cached` flag rather than a typed addon block.
 const addonTypes = new Set(['ensureGitRepo']);
-const providerNames = new Set(['local', 'gitignore.io']);
 
 main();
 
@@ -131,14 +131,9 @@ function validateConfig(data, label, context) {
   }
 
   if (config.provider) {
-    if (!providerNames.has(config.provider.name)) {
-      context.errors.push(`${label}: unknown provider '${config.provider.name}'`);
-    }
-
-    if (config.provider.name !== 'local') {
-      if (!Array.isArray(config.provider.templates) || config.provider.templates.length === 0) {
-        context.errors.push(`${label}: provider '${config.provider.name}' requires non-empty templates`);
-      }
+    const providerErrors = validateProviderConfig(config.provider);
+    for (const error of providerErrors) {
+      context.errors.push(`${label}: ${error}`);
     }
   }
 

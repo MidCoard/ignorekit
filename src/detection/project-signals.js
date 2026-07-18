@@ -48,7 +48,26 @@ function detectProjectSignals(projectPath, env) {
   const stderr = (env && env.stderr) || process.stderr;
   const signals = [];
   const packageJsonPath = path.join(projectPath, 'package.json');
-  const packageJson = readJsonOrNull(packageJsonPath, env);
+  let packageJson;
+  let packageJsonTooLarge = false;
+  try {
+    packageJson = readJsonOrNull(packageJsonPath, env);
+  } catch (err) {
+    // readJsonOrNull re-throws size-guard errors (err.code === 'EFILETOOLARGE')
+    // to avoid silently masking corruption. Signal detection is supplementary,
+    // not critical — degrade gracefully by proceeding without Node.js signals,
+    // matching the EACCES/invalid-JSON degradation pattern below.
+    if (err && err.code === 'EFILETOOLARGE') {
+      stderr.write(
+        `[ignorekit] Warning: ${packageJsonPath} is too large to read. ` +
+        'Node.js framework signals will not be detected. Set IGNOREKIT_DEBUG=1 for details.\n'
+      );
+      packageJson = null;
+      packageJsonTooLarge = true;
+    } else {
+      throw err;
+    }
+  }
 
   if (packageJson) {
     const names = packageNames(packageJson);
@@ -66,12 +85,15 @@ function detectProjectSignals(projectPath, env) {
     } else {
       signals.push({ preset: 'node', evidence: 'Node.js package detected', strength: 400 });
     }
-  } else if (fs.existsSync(packageJsonPath)) {
+  } else if (!packageJsonTooLarge && fs.existsSync(packageJsonPath)) {
     // package.json exists but readJsonOrNull returned null — the file is
     // present but unreadable (EACCES) or contains invalid JSON. The caller
     // will not detect any Node.js framework signals, which is a silent
     // misconfiguration. Surface a warning so the user can diagnose the
     // permission issue or corrupt file.
+    // The "too large" case is excluded because it already produced its own
+    // specific warning above — a generic "could not be read" message would
+    // be misleading for an oversized file.
     stderr.write(
       `[ignorekit] Warning: ${packageJsonPath} exists but could not be read. ` +
       'Check file permissions and JSON syntax. Set IGNOREKIT_DEBUG=1 for details.\n'

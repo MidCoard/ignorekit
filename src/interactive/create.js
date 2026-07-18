@@ -221,7 +221,7 @@ async function chooseRulesSmart(state, env) {
 }
 
 async function promptComponentCreation(options, env) {
-  const resolver = buildResolver({ options, projectDirHint: env.cwd });
+  const resolver = buildResolver({ options, env, projectDirHint: env.cwd });
   const categories = [...new Set(resolver.listComponents().map(id => id.split('/')[0]))].sort();
   writeIndexedList(env.stdout, 'Available categories', categories);
 
@@ -282,7 +282,7 @@ async function promptInlineRules(env) {
 }
 
 async function promptPresetCreation(options, env) {
-  const resolver = buildResolver({ options, projectDirHint: env.cwd });
+  const resolver = buildResolver({ options, env, projectDirHint: env.cwd });
   const presetIds = resolver.listPresets();
   const componentIds = resolver.listComponents();
   const state = {

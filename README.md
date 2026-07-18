@@ -214,6 +214,7 @@ AI tool components are opt-in. Add the tools your project actually uses as extra
 | Variable | Effect |
 |----------|--------|
 | `IGNOREKIT_DEBUG` | When set to any non-empty value, prints internal error messages that are otherwise swallowed (analysis failures, preset chain errors, etc.) to stderr. Useful when something silently does the wrong thing. |
+| `IGNOREKIT_GITIGNORE_IO_URL` | Overrides the gitignore.io API base URL. Set to a corporate mirror or local mock (e.g. `https://mirror.internal/gitignore`). The `/api/` path and template names are appended automatically. |
 | `IGNOREKIT_NONINTERACTIVE` | When set, skips every interactive prompt (preset picker, guided creation, confirmations) instead of hanging. Returns an error if a required choice can't be defaulted. Honored in CI environments automatically. |
 | `CI` | Standard CI flag. Same effect as `IGNOREKIT_NONINTERACTIVE` — avoid interactive prompts. |
 
