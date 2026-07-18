@@ -69,11 +69,15 @@ function readSituations(errors) {
           data: readJson(filePath)
         };
       } catch (error) {
-        errors.push(`${file}: invalid JSON: ${error.message}`);
+        if (error.code === 'EFILETOOLARGE') {
+          errors.push(`${file}: file too large (size guard)`);
+        } else {
+          errors.push(`${file}: invalid JSON: ${error.message}`);
+        }
         return {
           file,
           filePath,
-          data: {}
+          data: null
         };
       }
     });
@@ -82,6 +86,13 @@ function readSituations(errors) {
 function validateSituation(situation, context) {
   const { data, file } = situation;
   const errors = context.errors;
+
+  // When readJson threw EFILETOOLARGE, data is null. The size-guard error
+  // was already reported in readSituations — skip structural validation
+  // because there is no data to validate, and the empty-object fallback
+  // previously produced spurious errors about missing required fields.
+  if (data === null) return;
+
   const label = data.id || file;
   const expectedId = file.replace(/\.json$/, '');
 
@@ -234,7 +245,11 @@ function validateShippedPresets(shippedPresets, shippedComponents, errors) {
     try {
       presetData.set(presetId, readJson(filePath));
     } catch (e) {
-      errors.push(`preset ${presetId}: invalid JSON: ${e.message}`);
+      if (e.code === 'EFILETOOLARGE') {
+        errors.push(`preset ${presetId}: file too large (size guard)`);
+      } else {
+        errors.push(`preset ${presetId}: invalid JSON: ${e.message}`);
+      }
     }
   }
 

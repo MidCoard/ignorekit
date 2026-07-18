@@ -132,7 +132,19 @@ function validateGitignoreIoUrl(baseUrl) {
   return null;
 }
 
-function fetchGitignoreIoTemplates(templates) {
+/**
+ * Fetch gitignore template text from the gitignore.io API (or a configured
+ * mirror). Callers must validate the baseUrl before calling — this function
+ * does not re-validate so that buildGitignoreIoProviderText can validate once
+ * and avoid a redundant second check in the common case.
+ *
+ * @param {string[]} templates - Template names to fetch (e.g. ['java', 'gradle'])
+ * @param {string} [baseUrl=DEFAULT_GITIGNORE_IO_URL] - The API base URL,
+ *   resolved by the caller from process.env or the default. Passed explicitly
+ *   to avoid a TOCTOU race where the env var changes between the caller's
+ *   validation and this function's read.
+ */
+function fetchGitignoreIoTemplates(templates, baseUrl = DEFAULT_GITIGNORE_IO_URL) {
   const encoded = templates.map(encodeURIComponent).join(',');
   // The gitignore.io API endpoint defaults to the public service. Override
   // with IGNOREKIT_GITIGNORE_IO_URL for corporate mirrors or testing. The
@@ -140,15 +152,9 @@ function fetchGitignoreIoTemplates(templates) {
   // the templates are appended automatically. For example, setting it to
   // "https://mirror.internal/gitignore" produces the URL
   // "https://mirror.internal/gitignore/api/java,gradle".
-  const baseUrl = process.env.IGNOREKIT_GITIGNORE_IO_URL || DEFAULT_GITIGNORE_IO_URL;
   const url = `${baseUrl}/api/${encoded}`;
 
   return new Promise((resolve, reject) => {
-    const validationError = validateGitignoreIoUrl(baseUrl);
-    if (validationError) {
-      reject(validationError);
-      return;
-    }
     let settled = false;
     function safeResolve(value) {
       if (settled) return;
@@ -222,7 +228,7 @@ async function buildGitignoreIoProviderText(provider, options = {}) {
   if (options.fetchText) {
     text = await options.fetchText(provider.templates);
   } else {
-    text = await fetchGitignoreIoTemplates(provider.templates);
+    text = await fetchGitignoreIoTemplates(provider.templates, baseUrl);
   }
   const negations = detectNegationPatterns(text);
   if (negations.length > 0 && options.stderr) {

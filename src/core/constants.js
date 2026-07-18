@@ -69,4 +69,4 @@ function validateProviderConfig(provider, providerName) {
   return errors;
 }
 
-module.exports = { MAX_CONTENT_BYTES, VALID_PROVIDERS, PROVIDERS_REQUIRING_TEMPLATES, validateProviderConfig };
+module.exports = { MAX_CONTENT_BYTES, VALID_PROVIDERS, validateProviderConfig };

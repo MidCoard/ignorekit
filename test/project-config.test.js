@@ -442,18 +442,18 @@ test('fetchGitignoreIoTemplates timeout rejects exactly once (no double-rejectio
 });
 
 test('fetchGitignoreIoTemplates rejects IGNOREKIT_GITIGNORE_IO_URL without https scheme', async () => {
-  // A URL without a scheme (e.g. "mirror.internal/gitignore") cannot be parsed
-  // by the URL constructor and is rejected with a clear message. An http://
-  // URL is also rejected because it transmits templates and credentials in
-  // cleartext. Both cases are caught by URL-based validation.
+  // URL validation is now the caller's responsibility (buildGitignoreIoProviderText
+  // validates before calling). This test verifies that buildGitignoreIoProviderText
+  // rejects a non-https env var, which is the single validation entry point.
+  const { buildGitignoreIoProviderText } = require('../src/providers/gitignore-io');
   const origEnv = process.env.IGNOREKIT_GITIGNORE_IO_URL;
   process.env.IGNOREKIT_GITIGNORE_IO_URL = 'mirror.internal/gitignore';
-  delete require.cache[require.resolve('../src/providers/gitignore-io')];
-  const fresh = require('../src/providers/gitignore-io');
-
   try {
     await assert.rejects(
-      fresh.fetchGitignoreIoTemplates(['Node']),
+      buildGitignoreIoProviderText(
+        { name: 'gitignore.io', templates: ['Node'] },
+        { fetchText: async () => 'node_modules/\n' }
+      ),
       /IGNOREKIT_GITIGNORE_IO_URL/
     );
   } finally {
@@ -462,22 +462,22 @@ test('fetchGitignoreIoTemplates rejects IGNOREKIT_GITIGNORE_IO_URL without https
     } else {
       process.env.IGNOREKIT_GITIGNORE_IO_URL = origEnv;
     }
-    delete require.cache[require.resolve('../src/providers/gitignore-io')];
   }
 });
 
 test('fetchGitignoreIoTemplates redacts credentials from IGNOREKIT_GITIGNORE_IO_URL in error message', async () => {
-  // A URL containing embedded credentials (user:pass@host) must not leak those
-  // credentials or the hostname into the error message. In corporate
-  // environments the hostname itself may be sensitive.
+  // URL validation is now the caller's responsibility. This test verifies that
+  // buildGitignoreIoProviderText redacts credentials from an http URL with
+  // embedded userinfo.
+  const { buildGitignoreIoProviderText } = require('../src/providers/gitignore-io');
   const origEnv = process.env.IGNOREKIT_GITIGNORE_IO_URL;
   process.env.IGNOREKIT_GITIGNORE_IO_URL = 'http://admin:s3cret@mirror.internal/gitignore';
-  delete require.cache[require.resolve('../src/providers/gitignore-io')];
-  const fresh = require('../src/providers/gitignore-io');
-
   try {
     await assert.rejects(
-      fresh.fetchGitignoreIoTemplates(['Node']),
+      buildGitignoreIoProviderText(
+        { name: 'gitignore.io', templates: ['Node'] },
+        { fetchText: async () => 'node_modules/\n' }
+      ),
       (err) => {
         assert.match(err.message, /must use https, not http/i,
           'error must explain the scheme requirement');
@@ -496,24 +496,21 @@ test('fetchGitignoreIoTemplates redacts credentials from IGNOREKIT_GITIGNORE_IO_
     } else {
       process.env.IGNOREKIT_GITIGNORE_IO_URL = origEnv;
     }
-    delete require.cache[require.resolve('../src/providers/gitignore-io')];
   }
 });
 
 test('fetchGitignoreIoTemplates rejects https URL with userinfo (embedded credentials)', async () => {
-  // A URL like https://user:pass@host/... passes the startsWith('https://')
-  // check but embeds credentials that would be transmitted to the server.
-  // Using new URL() for parsing catches this: URLs with userinfo must be
-  // rejected regardless of scheme, because credentials in a URL are a
-  // security risk (visible in process listings, logs, error messages).
+  // URL validation is now the caller's responsibility. This test verifies that
+  // buildGitignoreIoProviderText rejects an https URL with embedded credentials.
+  const { buildGitignoreIoProviderText } = require('../src/providers/gitignore-io');
   const origEnv = process.env.IGNOREKIT_GITIGNORE_IO_URL;
   process.env.IGNOREKIT_GITIGNORE_IO_URL = 'https://deploy:key123@mirror.internal/gitignore';
-  delete require.cache[require.resolve('../src/providers/gitignore-io')];
-  const fresh = require('../src/providers/gitignore-io');
-
   try {
     await assert.rejects(
-      fresh.fetchGitignoreIoTemplates(['Node']),
+      buildGitignoreIoProviderText(
+        { name: 'gitignore.io', templates: ['Node'] },
+        { fetchText: async () => 'node_modules/\n' }
+      ),
       (err) => {
         assert.match(err.message, /credentials/i,
           'error must explain that URLs with embedded credentials are rejected');
@@ -530,22 +527,21 @@ test('fetchGitignoreIoTemplates rejects https URL with userinfo (embedded creden
     } else {
       process.env.IGNOREKIT_GITIGNORE_IO_URL = origEnv;
     }
-    delete require.cache[require.resolve('../src/providers/gitignore-io')];
   }
 });
 
 test('fetchGitignoreIoTemplates rejects malformed IGNOREKIT_GITIGNORE_IO_URL', async () => {
-  // A URL that cannot be parsed by the URL constructor (e.g. a bare hostname
-  // without a scheme) must be rejected with a clear error rather than producing
-  // a cryptic "Invalid URL" from https.get later.
+  // URL validation is now the caller's responsibility. This test verifies that
+  // buildGitignoreIoProviderText rejects a malformed URL.
+  const { buildGitignoreIoProviderText } = require('../src/providers/gitignore-io');
   const origEnv = process.env.IGNOREKIT_GITIGNORE_IO_URL;
   process.env.IGNOREKIT_GITIGNORE_IO_URL = 'mirror.internal/gitignore';
-  delete require.cache[require.resolve('../src/providers/gitignore-io')];
-  const fresh = require('../src/providers/gitignore-io');
-
   try {
     await assert.rejects(
-      fresh.fetchGitignoreIoTemplates(['Node']),
+      buildGitignoreIoProviderText(
+        { name: 'gitignore.io', templates: ['Node'] },
+        { fetchText: async () => 'node_modules/\n' }
+      ),
       /IGNOREKIT_GITIGNORE_IO_URL/
     );
   } finally {
@@ -554,22 +550,21 @@ test('fetchGitignoreIoTemplates rejects malformed IGNOREKIT_GITIGNORE_IO_URL', a
     } else {
       process.env.IGNOREKIT_GITIGNORE_IO_URL = origEnv;
     }
-    delete require.cache[require.resolve('../src/providers/gitignore-io')];
   }
 });
 
 test('fetchGitignoreIoTemplates redacts credentials from malformed IGNOREKIT_GITIGNORE_IO_URL in parse-failure error', async () => {
-  // When a URL containing credentials (user:pass@host) is malformed enough for
-  // new URL() to reject, the entire raw baseUrl is redacted — no part of the
-  // URL (including the hostname) appears in the error message.
+  // URL validation is now the caller's responsibility. This test verifies that
+  // buildGitignoreIoProviderText redacts credentials from a malformed URL.
+  const { buildGitignoreIoProviderText } = require('../src/providers/gitignore-io');
   const origEnv = process.env.IGNOREKIT_GITIGNORE_IO_URL;
   process.env.IGNOREKIT_GITIGNORE_IO_URL = '://s3cret@mirror.internal/gitignore';
-  delete require.cache[require.resolve('../src/providers/gitignore-io')];
-  const fresh = require('../src/providers/gitignore-io');
-
   try {
     await assert.rejects(
-      fresh.fetchGitignoreIoTemplates(['Node']),
+      buildGitignoreIoProviderText(
+        { name: 'gitignore.io', templates: ['Node'] },
+        { fetchText: async () => 'node_modules/\n' }
+      ),
       (err) => {
         assert.match(err.message, /IGNOREKIT_GITIGNORE_IO_URL/, 'error must mention the env var');
         assert.doesNotMatch(err.message, /s3cret/, 'error must not contain the password from the malformed URL');
@@ -583,7 +578,6 @@ test('fetchGitignoreIoTemplates redacts credentials from malformed IGNOREKIT_GIT
     } else {
       process.env.IGNOREKIT_GITIGNORE_IO_URL = origEnv;
     }
-    delete require.cache[require.resolve('../src/providers/gitignore-io')];
   }
 });
 
