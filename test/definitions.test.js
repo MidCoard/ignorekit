@@ -485,6 +485,70 @@ test('resolvePresetComponents deduplicates own components when no base', () => {
   }
 });
 
+// --- #1 (Round 8): checkCircular must backtrack visited set ---
+
+test('resolvePresetComponents backtracks visited set so diamond inheritance works', () => {
+  // Diamond: generic <- node <- vite
+  //                   \- python
+  // When resolving a preset that extends both vite and python (via components),
+  // the visited set from resolving vite must not leak into the resolution of
+  // python. Without backtracking, 'generic' stays in the visited set after
+  // vite's resolution, and python's resolution of generic would falsely
+  // trigger "Circular preset inheritance".
+  //
+  // This test resolves two independent chains sequentially using a shared
+  // visited set, which is the scenario the backtracking fix addresses.
+  const { resolvePresetComponents, createDefinitionResolver } = require('../src/definitions/resolver');
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeJson('dist/presets/generic.json', { name: 'generic', components: ['platform/macos'] });
+    workspace.writeJson('dist/presets/node.json', { name: 'node', base: 'generic', components: ['language/node'] });
+    workspace.writeJson('dist/presets/vite.json', { name: 'vite', base: 'node', components: ['framework/vite'] });
+    workspace.writeJson('dist/presets/python.json', { name: 'python', base: 'generic', components: ['language/python'] });
+
+    const resolver = createDefinitionResolver({ distRoot: workspace.path('dist') });
+
+    // Resolve vite first, then python with the same visited set.
+    // Without backtracking, the second call would falsely detect a cycle
+    // because 'generic' is still in the visited set.
+    const visited = new Set();
+    const viteResult = resolvePresetComponents(resolver, 'vite', visited);
+    assert.deepEqual(viteResult, ['platform/macos', 'language/node', 'framework/vite']);
+
+    // After backtracking, 'generic' and 'node' should have been removed from
+    // the visited set, so resolving python (which also extends generic) works.
+    const pythonResult = resolvePresetComponents(resolver, 'python', visited);
+    assert.deepEqual(pythonResult, ['platform/macos', 'language/python']);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('resolvePresetChain backtracks visited set so diamond inheritance works', () => {
+  // Same diamond pattern but testing resolvePresetChain.
+  const { resolvePresetChain, createDefinitionResolver } = require('../src/definitions/resolver');
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeJson('dist/presets/generic.json', { name: 'generic', components: [] });
+    workspace.writeJson('dist/presets/node.json', { name: 'node', base: 'generic', components: [] });
+    workspace.writeJson('dist/presets/vite.json', { name: 'vite', base: 'node', components: [] });
+    workspace.writeJson('dist/presets/python.json', { name: 'python', base: 'generic', components: [] });
+
+    const resolver = createDefinitionResolver({ distRoot: workspace.path('dist') });
+
+    const visited = new Set();
+    const viteChain = resolvePresetChain(resolver, 'vite', visited);
+    assert.deepEqual(viteChain, ['generic', 'node', 'vite']);
+
+    // Without backtracking, this would throw "Circular preset inheritance"
+    // because 'generic' is still in the visited set.
+    const pythonChain = resolvePresetChain(resolver, 'python', visited);
+    assert.deepEqual(pythonChain, ['generic', 'python']);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 // --- #11 (P1): readPreset JSON.parse errors must include file path ---
 
 test('readPreset includes file path in error for malformed JSON', () => {

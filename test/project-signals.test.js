@@ -195,3 +195,47 @@ test('detectProjectSignals catches size-guard errors by code, not message', () =
     workspace.cleanup();
   }
 });
+
+// --- #7 (Round 8): readJsonOrNull must warn on EACCES unconditionally ---
+
+test('readJsonOrNull writes EACCES warning to stderr unconditionally (not only under IGNOREKIT_DEBUG)', () => {
+  // A permission error on a config file is a real misconfiguration that the
+  // user needs to know about, even without debug mode. The warning must
+  // appear on stderr regardless of IGNOREKIT_DEBUG.
+  const { readJsonOrNull } = require('../src/core/json');
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('project/config.json', '{"key": "value"}');
+    const filePath = workspace.path('project/config.json');
+
+    // Mock fs.readFileSync to throw EACCES
+    const fs = require('fs');
+    const origReadFileSync = fs.readFileSync;
+    fs.readFileSync = function(path, encoding) {
+      if (path === filePath) {
+        const err = new Error('EACCES: permission denied');
+        err.code = 'EACCES';
+        throw err;
+      }
+      return origReadFileSync.call(this, path, encoding);
+    };
+
+    try {
+      const stderrChunks = [];
+      const result = readJsonOrNull(filePath, {
+        stderr: { write: (chunk) => { stderrChunks.push(String(chunk)); return true; } }
+      });
+
+      // readJsonOrNull must still return null (preserving its contract)
+      assert.equal(result, null);
+
+      // But it must also write an unconditional EACCES warning to stderr
+      const stderr = stderrChunks.join('');
+      assert.match(stderr, /permission denied/i, 'EACCES warning must appear on stderr unconditionally');
+    } finally {
+      fs.readFileSync = origReadFileSync;
+    }
+  } finally {
+    workspace.cleanup();
+  }
+});

@@ -2,7 +2,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const { readJson } = require('../core/json');
 const { parseSignificantLines, normalizePattern } = require('../core/text');
 const { resolvePresetComponents } = require('../definitions/resolver');
 const { buildResolver } = require('../core/resolver-factory');
@@ -139,12 +138,11 @@ function scorePreset(presetComponents, componentResults, totalInputLines = 0) {
 /**
  * Core analysis logic — no side effects. Reusable by extract and adopt.
  *
- * Deferred: this function handles size guarding, line parsing, component
- * matching, classification, preset scoring, and result assembly in a single
- * body. Extracting sub-functions (e.g. matchAllComponents, scoreAllPresets)
- * would improve readability, but the current structure is correct and
- * well-commented. Revisit if a third caller needs a subset of the analysis
- * pipeline, which would make the extraction clearly worthwhile.
+ * The analysis pipeline is decomposed into matchAllComponents (component
+ * matching, classification, and coverage) and scoreAllPresets (preset
+ * scoring with project signal detection). These are kept in the same file
+ * because they share the same data flow: matchAllComponents produces
+ * componentResults which scoreAllPresets consumes.
  *
  * @param {object} options
  * @param {string} options.gitignorePath - Path to the .gitignore file
@@ -193,11 +191,33 @@ function analyzeGitignore(options, env) {
 
   const distRoot = options.distRoot || DIST_ROOT;
   const resolver = buildResolver({ options, env, projectDirHint: projectPath });
-  const signalByPreset = new Map(
-    detectProjectSignals(projectPath, env).map(signal => [signal.preset, signal])
-  );
 
-  // Load all components and match
+  const matchResult = matchAllComponents(resolver, inputLines, env);
+  const presetResult = scoreAllPresets(resolver, matchResult.componentResults, totalInputLines, projectPath, env);
+
+  return {
+    totalLines: totalInputLines,
+    inputLines,
+    matchedComponents: matchResult.matchedComponents,
+    displayMatchedComponents: matchResult.displayMatchedComponents,
+    unmatchedLines: matchResult.unmatchedLines,
+    displayedUnmatchedLines: matchResult.displayedUnmatchedLines,
+    componentResults: matchResult.componentResults,
+    bestPreset: presetResult.bestPreset,
+    allPresets: presetResult.allPresets,
+    ...(originalLines ? { originalLines } : {})
+  };
+}
+
+/**
+ * Match all known components against the input lines.
+ *
+ * @param {object} resolver - Definition resolver
+ * @param {string[]} inputLines - Normalized significant lines from the input .gitignore
+ * @param {object} [env] - Environment streams for debug logging
+ * @returns {{ componentResults: Map, matchedComponents: object[], displayMatchedComponents: object[], unmatchedLines: string[], displayedUnmatchedLines: string[], totalMatchedCount: number }}
+ */
+function matchAllComponents(resolver, inputLines, env) {
   const componentIds = resolver.listComponents();
   const componentResults = new Map();
 
@@ -246,18 +266,33 @@ function analyzeGitignore(options, env) {
 
   // Unmatched lines relative to the *displayed* subset of matched components.
   // The display filter hides low-signal partials, so a line those hidden
-  // components covered still needs to appear as unmatched to the user. Computed
-  // here from inputLines so callers never re-read the source file.
+  // components covered still needs to appear as unmatched to the user.
   const displayedRules = new Set();
   for (const component of displayMatchedComponents) {
     for (const line of component.matched) displayedRules.add(normalizePattern(line));
   }
   const displayedUnmatchedLines = inputLines.filter(line => !displayedRules.has(normalizePattern(line)));
 
-  // Coverage calculation (use matched count from components)
   const totalMatchedCount = matchedComponents.reduce((sum, c) => sum + c.matched.length, 0);
 
-  // Preset scoring
+  return { componentResults, matchedComponents, displayMatchedComponents, unmatchedLines, displayedUnmatchedLines, totalMatchedCount };
+}
+
+/**
+ * Score all known presets against the component match results.
+ *
+ * @param {object} resolver - Definition resolver
+ * @param {Map} componentResults - Match results keyed by component ID
+ * @param {number} totalInputLines - Total significant lines in the input .gitignore
+ * @param {string} projectPath - Project root for signal detection
+ * @param {object} [env] - Environment streams for debug logging
+ * @returns {{ allPresets: object[], bestPreset: object|null }}
+ */
+function scoreAllPresets(resolver, componentResults, totalInputLines, projectPath, env) {
+  const signalByPreset = new Map(
+    detectProjectSignals(projectPath, env).map(signal => [signal.preset, signal])
+  );
+
   const allPresets = [];
   try {
     const presetIds = resolver.listPresets();
@@ -286,19 +321,7 @@ function analyzeGitignore(options, env) {
   }
 
   const bestPreset = allPresets.length > 0 ? allPresets[0] : null;
-
-  return {
-    totalLines: totalInputLines,
-    inputLines,
-    matchedComponents,
-    displayMatchedComponents,
-    unmatchedLines,
-    displayedUnmatchedLines,
-    componentResults,
-    bestPreset,
-    allPresets,
-    ...(originalLines ? { originalLines } : {})
-  };
+  return { allPresets, bestPreset };
 }
 
 /**
@@ -390,4 +413,4 @@ function runAnalyzeWorkflow(options, env) {
   };
 }
 
-module.exports = { runAnalyzeWorkflow, analyzeGitignore, matchComponent, classifyMatch, scorePreset };
+module.exports = { runAnalyzeWorkflow, analyzeGitignore, matchComponent, classifyMatch, scorePreset, matchAllComponents, scoreAllPresets };

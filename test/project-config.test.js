@@ -217,7 +217,7 @@ test('buildProjectConfig defaults exclude to empty array when not provided', () 
   assert.deepEqual(config.exclude, []);
 });
 
-test('fetchGitignoreIoTemplates rejects on timeout', async () => {
+test('fetchGitignoreIoTemplates (internal) rejects on timeout', async () => {
   const EventEmitter = require('events');
   const https = require('https');
   const origGet = https.get;
@@ -231,12 +231,14 @@ test('fetchGitignoreIoTemplates rejects on timeout', async () => {
   };
 
   try {
-    const { fetchGitignoreIoTemplates } = require('../src/providers/gitignore-io');
     delete require.cache[require.resolve('../src/providers/gitignore-io')];
     const fresh = require('../src/providers/gitignore-io');
 
+    // fetchGitignoreIoTemplates is no longer exported; route through
+    // buildGitignoreIoProviderText without fetchText so the internal
+    // function is exercised.
     await assert.rejects(
-      fresh.fetchGitignoreIoTemplates(['Node']),
+      fresh.buildGitignoreIoProviderText({ name: 'gitignore.io', templates: ['Node'] }),
       /timed out/
     );
   } finally {
@@ -247,7 +249,7 @@ test('fetchGitignoreIoTemplates rejects on timeout', async () => {
 
 // --- #8: Content-Length and per-chunk size guard ---
 
-test('fetchGitignoreIoTemplates rejects oversized Content-Length before consuming the body', async () => {
+test('fetchGitignoreIoTemplates (internal) rejects oversized Content-Length before consuming the body', async () => {
   // The original guard only checked `body.length > MAX_CONTENT_BYTES` after each chunk
   // was concatenated, so a 2 MiB first chunk was already in memory by the
   // time the rejection happened. The fix inspects Content-Length up front and
@@ -274,12 +276,11 @@ test('fetchGitignoreIoTemplates rejects oversized Content-Length before consumin
   };
 
   try {
-    const { fetchGitignoreIoTemplates } = require('../src/providers/gitignore-io');
     delete require.cache[require.resolve('../src/providers/gitignore-io')];
     const fresh = require('../src/providers/gitignore-io');
 
     await assert.rejects(
-      fresh.fetchGitignoreIoTemplates(['Node']),
+      fresh.buildGitignoreIoProviderText({ name: 'gitignore.io', templates: ['Node'] }),
       /too large/
     );
   } finally {
@@ -288,7 +289,7 @@ test('fetchGitignoreIoTemplates rejects oversized Content-Length before consumin
   }
 });
 
-test('fetchGitignoreIoTemplates rejects when body+chunk exceeds MAX_CONTENT_BYTES', async () => {
+test('fetchGitignoreIoTemplates (internal) rejects when body+chunk exceeds MAX_CONTENT_BYTES', async () => {
   // Per-chunk guard: server does not advertise Content-Length, so we still
   // need to reject mid-stream when accumulated bytes cross the cap.
   const EventEmitter = require('events');
@@ -314,7 +315,6 @@ test('fetchGitignoreIoTemplates rejects when body+chunk exceeds MAX_CONTENT_BYTE
   };
 
   try {
-    const { fetchGitignoreIoTemplates } = require('../src/providers/gitignore-io');
     delete require.cache[require.resolve('../src/providers/gitignore-io')];
     const fresh = require('../src/providers/gitignore-io');
 
@@ -324,7 +324,7 @@ test('fetchGitignoreIoTemplates rejects when body+chunk exceeds MAX_CONTENT_BYTE
     // is invoked with an Error.
     let rejected = false;
     try {
-      await fresh.fetchGitignoreIoTemplates(['Node']);
+      await fresh.buildGitignoreIoProviderText({ name: 'gitignore.io', templates: ['Node'] });
     } catch (err) {
       rejected = true;
       assert.match(err.message, /exceeded/);
@@ -336,7 +336,7 @@ test('fetchGitignoreIoTemplates rejects when body+chunk exceeds MAX_CONTENT_BYTE
   }
 });
 
-test('fetchGitignoreIoTemplates rejects on response stream error', async () => {
+test('fetchGitignoreIoTemplates (internal) rejects on response stream error', async () => {
   // If the response stream emits an error (e.g. connection reset mid-body),
   // the promise must reject rather than hanging forever. Without a
   // response.on('error') handler, the promise would never settle because
@@ -366,7 +366,7 @@ test('fetchGitignoreIoTemplates rejects on response stream error', async () => {
     const fresh = require('../src/providers/gitignore-io');
 
     await assert.rejects(
-      fresh.fetchGitignoreIoTemplates(['Node']),
+      fresh.buildGitignoreIoProviderText({ name: 'gitignore.io', templates: ['Node'] }),
       /connection reset/
     );
   } finally {
@@ -375,7 +375,7 @@ test('fetchGitignoreIoTemplates rejects on response stream error', async () => {
   }
 });
 
-test('fetchGitignoreIoTemplates timeout rejects exactly once (no double-rejection)', async () => {
+test('fetchGitignoreIoTemplates (internal) timeout rejects exactly once (no double-rejection)', async () => {
   // The timeout handler must not call reject() after req.destroy(), because
   // req.destroy() (even without an error argument) triggers 'error' on the
   // request in the real Node.js HTTP implementation ("socket hang up"), which
@@ -424,7 +424,7 @@ test('fetchGitignoreIoTemplates timeout rejects exactly once (no double-rejectio
 
     try {
       await OrigPromise.resolve(
-        fresh.fetchGitignoreIoTemplates(['Node'])
+        fresh.buildGitignoreIoProviderText({ name: 'gitignore.io', templates: ['Node'] })
       );
       assert.fail('should have rejected');
     } catch (err) {

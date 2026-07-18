@@ -27,6 +27,16 @@ const BOOLEAN_OPTIONS = new Set([
   'allowNestedGit', 'apply', 'verbose', 'suggestPreset'
 ]);
 
+// Repeatable options accumulate into arrays instead of overwriting.
+// The key is the camelCase option name; the value is the plural property
+// name on the options object (e.g. --component -> options.components).
+const REPEATABLE_OPTIONS = {
+  template: 'templates',
+  component: 'components',
+  exclude: 'exclude',
+  rule: 'rules'
+};
+
 function parseArgs(args) {
   const options = { _: [] };
   for (let index = 0; index < args.length; index += 1) {
@@ -60,39 +70,29 @@ function parseArgs(args) {
       continue;
     }
     if (inlineValue !== null) {
-      options[key] = inlineValue;
+      if (key in REPEATABLE_OPTIONS) {
+        const prop = REPEATABLE_OPTIONS[key];
+        if (!options[prop]) options[prop] = [];
+        options[prop].push(inlineValue);
+      } else {
+        options[key] = inlineValue;
+      }
       continue;
     }
     const value = args[index + 1];
     if (!value || value.startsWith('--')) {
       throw new Error(`Option ${arg} requires a value.`);
     }
-    options[key] = value;
+    if (key in REPEATABLE_OPTIONS) {
+      const prop = REPEATABLE_OPTIONS[key];
+      if (!options[prop]) options[prop] = [];
+      options[prop].push(value);
+    } else {
+      options[key] = value;
+    }
     index += 1;
   }
   return options;
-}
-
-/**
- * Walk the raw argv once and collect every value supplied for `optionName`,
- * accepting both `--flag value` (consumes the next token) and `--flag=value`
- * (slices the suffix). Returns values in argument order so repeated use of
- * `--component foo --component bar` and `--component=foo --component=bar`
- * produce the same result. Empty-looking values are preserved so a deliberate
- * `--output-root ""` is not silently dropped.
- */
-function collectRepeated(args, optionName) {
-  const values = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === optionName && index + 1 < args.length) {
-      values.push(args[index + 1]);
-      index += 1;
-    } else if (arg.startsWith(optionName + '=')) {
-      values.push(arg.slice(optionName.length + 1));
-    }
-  }
-  return values;
 }
 
 // --- Help system ---
@@ -641,9 +641,11 @@ async function runCli(args, env = {}) {
       if (options.noGit) {
         options.git = false;
       }
-      options.templates = collectRepeated(args.slice(1), '--template');
-      options.components = collectRepeated(args.slice(1), '--component');
-      options.exclude = collectRepeated(args.slice(1), '--exclude');
+      // Repeatable options (templates, components, exclude) are now accumulated
+      // by parseArgs into arrays. Default to empty arrays when none were given.
+      options.templates = options.templates || [];
+      options.components = options.components || [];
+      options.exclude = options.exclude || [];
       // Route through buildCreateEnv so --yes (and TTY/CI detection) honor the
       // same rules as `adopt` and `create`. Previously `init --yes` was parsed
       // but ignored because init had no confirm gate at all.
@@ -671,9 +673,9 @@ async function runCli(args, env = {}) {
         if (!picked) return { exitCode: 1 };
         options.preset = picked;
       }
-      options.templates = collectRepeated(args.slice(1), '--template');
-      options.components = collectRepeated(args.slice(1), '--component');
-      options.exclude = collectRepeated(args.slice(1), '--exclude');
+      options.templates = options.templates || [];
+      options.components = options.components || [];
+      options.exclude = options.exclude || [];
       // Route through buildCreateEnv so --yes (and TTY/CI detection) honor the
       // same rules as `create`. Previously `adopt --yes` still prompted because
       // the inline createConfirm here didn't see the --yes flag.
@@ -700,7 +702,34 @@ async function runCli(args, env = {}) {
       const createEnv = buildCreateEnv({ stdout, stderr, cwd: env.cwd, stdin: env.stdin, ask: env.ask }, options.yes);
       if (subcommand === 'component') {
         options.name = options._[0];
-        options.rules = collectRepeated(args.slice(2), '--rule');
+        options.rules = options.rules || [];
+        // Accept category/name syntax in the positional argument. When the
+        // name contains a slash, split it into category and name -- but only
+        // if the prefix before the slash looks like a valid category (no path
+        // traversal like ".."). If the prefix is not a valid segment, the
+        // whole name is left intact so assertSegment in component.js rejects
+        // it with a clear error. If --category was also provided, the
+        // explicit flag wins (the user was deliberate), but the slash prefix
+        // is still stripped from the name so assertSegment does not reject it.
+        if (options.name && options.name.includes('/')) {
+          const slashIndex = options.name.indexOf('/');
+          const prefix = options.name.slice(0, slashIndex);
+          const suffix = options.name.slice(slashIndex + 1);
+          // A valid category segment must not be empty, must not contain
+          // path traversal, and must not contain additional slashes.
+          const validPrefix = prefix.length > 0 && prefix !== '..' && !prefix.includes('/');
+          if (validPrefix) {
+            if (!options.category) {
+              options.category = prefix;
+            }
+            options.name = suffix;
+          }
+          // If the prefix is not a valid category (e.g. "../escape"), leave
+          // options.name unchanged -- assertSegment will reject the slash.
+        }
+        if (options.name && !options.category) {
+          throw new Error('--category is required when the component name does not include a category prefix (e.g. "local/runtime")');
+        }
         if (!options.name) {
           // Use the same env construction for the interactive path as for the
           // write path (createEnv), so the create command has a consistent env
@@ -717,7 +746,7 @@ async function runCli(args, env = {}) {
       }
       if (subcommand === 'preset') {
         options.name = options._[0];
-        options.components = collectRepeated(args.slice(2), '--component');
+        options.components = options.components || [];
         if (!options.name) {
           const interactiveEnv = { stdin: env.stdin, stdout, stderr, cwd: env.cwd, ask: env.ask };
           const draft = await runWithQuestions(interactiveEnv, ask => promptPresetCreation(options, { ...createEnv, ask }));

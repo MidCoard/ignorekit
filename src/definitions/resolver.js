@@ -202,10 +202,16 @@ function resolvePresetComponents(resolver, presetId, visited = new Set()) {
   const ownComponents = Array.isArray(preset.components) ? preset.components : [];
 
   if (!preset.base) {
+    visited.delete(presetId);
     return [...new Set(ownComponents)];
   }
 
   const baseComponents = resolvePresetComponents(resolver, preset.base, visited);
+  // Backtrack: remove this preset from the visited set so sibling branches
+  // in a diamond inheritance graph do not falsely detect a cycle. The
+  // visited set tracks the current path from root to leaf; once we return
+  // from a subtree, that subtree's nodes are no longer "on the current path".
+  visited.delete(presetId);
   // Base components first, then own — deduplicate (first occurrence wins)
   const seen = new Set();
   const result = [];
@@ -231,9 +237,14 @@ function resolvePresetChain(resolver, presetId, visited = new Set()) {
 
   const preset = resolver.readPreset(presetId);
   if (!preset.base) {
+    visited.delete(presetId);
     return [presetId];
   }
   const chain = resolvePresetChain(resolver, preset.base, visited);
+  // Backtrack: same reasoning as resolvePresetComponents — remove this
+  // preset from the visited set so sibling branches in a diamond graph
+  // are not falsely flagged as circular.
+  visited.delete(presetId);
   return [...chain, presetId];
 }
 

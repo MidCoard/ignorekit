@@ -46,6 +46,22 @@ function packageScripts(packageJson) {
  */
 function detectProjectSignals(projectPath, env) {
   const stderr = (env && env.stderr) || process.stderr;
+
+  // If the project directory itself is not readable (EACCES), every
+  // fs.existsSync call below returns false silently and no signals are
+  // detected. This is a real misconfiguration the user needs to know about,
+  // even without debug mode. Return early with no signals rather than
+  // silently producing an empty result that looks like "no manifest files".
+  try {
+    fs.readdirSync(projectPath);
+  } catch (err) {
+    if (err.code === 'EACCES') {
+      stderr.write(`Warning: permission denied reading ${projectPath}\n`);
+      return [];
+    }
+    throw err;
+  }
+
   const signals = [];
   const packageJsonPath = path.join(projectPath, 'package.json');
   let packageJson;

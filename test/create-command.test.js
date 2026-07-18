@@ -488,6 +488,81 @@ test('create component rejects invalid ids', async () => {
   }
 });
 
+test('create component accepts category/name syntax (infers --category)', async () => {
+  // When the positional argument contains a slash (e.g. "local/runtime"),
+  // the category is inferred from the prefix and the name is the suffix.
+  // This matches the category/name format shown by the `list` command.
+  const workspace = createTempWorkspace();
+  try {
+    const output = [];
+    const result = await runCli([
+      'create', 'component', 'local/runtime',
+      '--rule', 'runtime/', '--rule', '*.local', '--yes',
+      '--output-root', workspace.path('defs')
+    ], {
+      stdout: { write: text => output.push(String(text)) },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    const filePath = workspace.path('defs/components/local/runtime.gitignore');
+    assert.equal(fs.existsSync(filePath), true);
+    assert.equal(fs.readFileSync(filePath, 'utf8'), 'runtime/\n*.local\n');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('create component requires --category when name has no slash', async () => {
+  // When the name is a plain identifier without a slash, --category is
+  // still required. The error message must guide the user to either use
+  // the category/name syntax or pass --category explicitly.
+  const workspace = createTempWorkspace();
+  try {
+    const errors = [];
+    const result = await runCli([
+      'create', 'component', 'runtime',
+      '--rule', 'runtime/', '--yes',
+      '--output-root', workspace.path('defs')
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: text => errors.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 1);
+    assert.match(errors.join(''), /--category is required/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('create component category/name syntax allows explicit --category override', async () => {
+  // When both the category/name syntax AND --category are provided,
+  // the explicit --category takes precedence (the user was explicit).
+  const workspace = createTempWorkspace();
+  try {
+    const result = await runCli([
+      'create', 'component', 'local/runtime',
+      '--category', 'framework',
+      '--rule', 'runtime/', '--yes',
+      '--output-root', workspace.path('defs')
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    // The explicit --category framework should win over the "local" prefix
+    const filePath = workspace.path('defs/components/framework/runtime.gitignore');
+    assert.equal(fs.existsSync(filePath), true);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('create component --from defaults to user definitions directory', async () => {
   const workspace = createTempWorkspace();
   const { USER_ROOT } = require('../src/core/path');

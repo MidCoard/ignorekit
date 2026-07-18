@@ -98,11 +98,13 @@ async function runAdoptWorkflow(options, env) {
     } catch (err) {
       stderr.write(`Could not analyze existing .gitignore: ${err.message}\n`);
       stderr.write('Proceeding without analysis.\n');
-      if (fs.existsSync(existingGitignorePath)) {
-        const warning = 'Could not analyze existing .gitignore -- custom rules will NOT be carried forward.';
-        warnings.push(warning);
-        stderr.write(`${warning}\n`);
-      }
+      // The outer `if (fs.existsSync(existingGitignorePath))` at line 85
+      // already confirmed the file exists, so the analysis failure means the
+      // file is present but unparseable. Custom rules cannot be carried
+      // forward — surface this explicitly.
+      const warning = 'Could not analyze existing .gitignore -- custom rules will NOT be carried forward.';
+      warnings.push(warning);
+      stderr.write(`${warning}\n`);
       debugError(err, 'adopt.analyze', env);
     }
 
@@ -216,8 +218,8 @@ async function runAdoptWorkflow(options, env) {
     // callers still produce byte-identical output to before.
     const seen = new Set();
     const customRules = [];
-    const existingRules = analysis.originalLines || analysis.inputLines;
-    for (const line of existingRules) {
+    const sourceLines = analysis.originalLines || analysis.inputLines;
+    for (const line of sourceLines) {
       const key = normalizePattern(line);
       if (!coveredRules.has(key) && !seen.has(key)) {
         seen.add(key);

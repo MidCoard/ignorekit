@@ -71,6 +71,13 @@ function readJsonOrNull(filePath, env) {
     // unexpected — surface them under IGNOREKIT_DEBUG so the user can diagnose
     // permission issues or corrupt config files, but still return null to
     // preserve the contract.
+    // EACCES is special: a permission error on a config file is a real
+    // misconfiguration that the user needs to know about even without debug
+    // mode. Log a warning to stderr unconditionally so the user can fix the
+    // permissions, rather than silently proceeding with missing data.
+    if (err && err.code === 'EACCES' && env && env.stderr) {
+      env.stderr.write(`Warning: permission denied reading ${filePath}\n`);
+    }
     debugError(err, `readJsonOrNull.${filePath}`, env);
     return null;
   }

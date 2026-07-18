@@ -250,4 +250,4 @@ async function buildGitignoreIoProviderText(provider, options = {}) {
   return text;
 }
 
-module.exports = { buildGitignoreIoProviderText, fetchGitignoreIoTemplates, detectNegationPatterns, detectSecretLikePatterns, validateGitignoreIoUrl, DEFAULT_GITIGNORE_IO_URL };
+module.exports = { buildGitignoreIoProviderText, detectNegationPatterns, detectSecretLikePatterns, validateGitignoreIoUrl, DEFAULT_GITIGNORE_IO_URL };
