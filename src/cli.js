@@ -524,10 +524,13 @@ async function pickPresetInteractive(options, env) {
   const num = parseInt(v, 10);
   if (Number.isInteger(num) && num >= 1 && num <= presetIds.length) return presetIds[num - 1];
 
-  // Try matching by name
-  if (presetIds.includes(answer.trim())) return answer.trim();
+  // Try matching by name (case-sensitive first, then case-insensitive)
+  const trimmed = answer.trim();
+  if (presetIds.includes(trimmed)) return trimmed;
+  const ciMatch = presetIds.find(p => p.toLowerCase() === trimmed.toLowerCase());
+  if (ciMatch) return ciMatch;
 
-  stdout.write(`Invalid selection: ${answer.trim()}\n`);
+  stdout.write(`Invalid selection: ${trimmed}\n`);
   return null;
 }
 

@@ -26,7 +26,7 @@ function assertDefinitionId(id) {
   // prefixes (e.g. "./a" normalizes to "a"), and trailing slashes (e.g. "a/"
   // normalizes to "a"). Without these, two different IDs could resolve to the
   // same file, causing ambiguous lookups.
-  if (id.includes('//') || id.startsWith('./') || id.endsWith('/')) {
+  if (id.includes('//') || id.includes('/./') || id.startsWith('./') || id.endsWith('/')) {
     throw new Error(`Invalid definition id: ${id}`);
   }
   if (!definitionIdPattern.test(id) || id.includes('..') || id.startsWith('.')) {

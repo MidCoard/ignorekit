@@ -1284,3 +1284,30 @@ test('create component interactive flow uses constructed env stdin for runWithQu
     workspace.cleanup();
   }
 });
+
+// --- Round 9: pickPresetInteractive case-insensitive name matching ---
+
+test('pickPresetInteractive matches preset names case-insensitively', async () => {
+  // Typing "VITE" or "Vite" should match the "vite" preset, not reject as invalid.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeJson('dist/presets/vite.json', { name: 'vite', components: [] });
+    workspace.writeJson('dist/presets/generic.json', { name: 'generic', components: [] });
+
+    const { pickPresetInteractive } = require('../src/cli');
+
+    // Uppercase variant
+    const result = await pickPresetInteractive(
+      { distRoot: workspace.path('dist'), projectPath: '.' },
+      {
+        stdout: { write: () => {} },
+        stdin: { isTTY: true },
+        ask: async () => 'VITE'
+      }
+    );
+
+    assert.equal(result, 'vite', 'should match "vite" when user types "VITE"');
+  } finally {
+    workspace.cleanup();
+  }
+});

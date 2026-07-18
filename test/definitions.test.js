@@ -570,3 +570,17 @@ test('readPreset includes file path in error for malformed JSON', () => {
     workspace.cleanup();
   }
 });
+
+// --- Round 9: assertDefinitionId rejects /./ segments ---
+
+test('assertDefinitionId rejects dot-segment in middle of id (a/./b normalizes to a/b)', () => {
+  const { assertDefinitionId } = require('../src/core/path');
+  let caught = null;
+  try {
+    assertDefinitionId('a/./b');
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(caught, 'assertDefinitionId should reject "a/./b" (path-aliasing)');
+  assert.match(caught.message, /Invalid definition id/);
+});
