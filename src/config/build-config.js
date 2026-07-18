@@ -14,10 +14,10 @@ function buildProjectConfig(name, options) {
     // the CLI path. Subsequent errors are suppressed to avoid overwhelming
     // the user — they'll see the next one after fixing the first.
     const first = validationErrors[0];
-    if (/requires non-empty templates/.test(first)) {
+    if (first.startsWith('provider "') && first.includes('requires non-empty templates')) {
       throw new Error(`Non-local provider "${provider.name}" requires at least one --template. Pass --template <name> (repeatable) with --provider ${provider.name}.`);
     }
-    if (/must contain only strings/.test(first)) {
+    if (first.startsWith('provider "') && first.includes('must contain only strings')) {
       throw new Error(`Non-local provider "${provider.name}" templates must contain only strings. Pass --template <name> (repeatable) with string values.`);
     }
     throw new Error(first);

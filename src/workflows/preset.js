@@ -27,6 +27,9 @@ const { extractStreams } = require('../core/env');
 async function runPresetCreate(options, env) {
   const { stdout, stderr, cwd } = extractStreams(env);
   assertDefinitionId(options.name);
+  if (options.base) {
+    assertDefinitionId(options.base);
+  }
   const outputRoot = options.outputRoot
     ? path.resolve(cwd, options.outputRoot)
     : USER_ROOT;

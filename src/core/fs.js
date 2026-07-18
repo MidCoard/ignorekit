@@ -4,7 +4,16 @@ const fs = require('fs');
 const path = require('path');
 const { debugError } = require('./debug');
 
-function walkFiles(directory) {
+/**
+ * Maximum recursion depth for walkFiles. Prevents stack overflow from
+ * pathological directory structures (e.g. circular symlinks that evade
+ * the isSymbolicLink check, or excessively deep nesting). Real definition
+ * directories are at most 3-4 levels deep (e.g. components/framework/vite).
+ */
+const MAX_WALK_DEPTH = 20;
+
+function walkFiles(directory, depth = 0) {
+  if (depth > MAX_WALK_DEPTH) return [];
   const entries = fs.readdirSync(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
@@ -19,7 +28,7 @@ function walkFiles(directory) {
       continue;
     }
     if (entry.isDirectory()) {
-      files.push(...walkFiles(fullPath));
+      files.push(...walkFiles(fullPath, depth + 1));
     } else if (entry.isFile()) {
       files.push(fullPath);
     }

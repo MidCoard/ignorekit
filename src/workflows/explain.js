@@ -97,7 +97,7 @@ function runExplainWorkflow(options, env) {
   const excludeSet = new Set(config.exclude || []);
   const filteredPresetComponents = presetComponents.filter(id => !excludeSet.has(id));
   const extraComponents = config.components || [];
-  const allComponents = [...filteredPresetComponents, ...extraComponents];
+  const allComponents = [...new Set([...filteredPresetComponents, ...extraComponents])];
 
   // Track component IDs that were successfully read — missing components are
   // skipped during display and excluded from the returned component list so

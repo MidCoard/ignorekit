@@ -10,7 +10,7 @@ const { buildResolver } = require('../core/resolver-factory');
 const { generateGitignore } = require('../generator');
 const { listTrackedIgnoredFiles, removeCachedFiles } = require('../git');
 const { analyzeGitignore } = require('./analyze');
-const { normalizePattern } = require('../core/text');
+const { normalizePattern, parseSignificantLines } = require('../core/text');
 const { writeMatchedComponentsBlock } = require('./_format');
 const { debugError } = require('../core/debug');
 const { extractStreams } = require('../core/env');
@@ -98,6 +98,11 @@ async function runAdoptWorkflow(options, env) {
     } catch (err) {
       stderr.write(`Could not analyze existing .gitignore: ${err.message}\n`);
       stderr.write('Proceeding without analysis.\n');
+      if (fs.existsSync(existingGitignorePath)) {
+        const warning = 'Could not analyze existing .gitignore -- custom rules will NOT be carried forward.';
+        warnings.push(warning);
+        stderr.write(`${warning}\n`);
+      }
       debugError(err, 'adopt.analyze', env);
     }
 
@@ -108,9 +113,9 @@ async function runAdoptWorkflow(options, env) {
         writeMatchedComponentsBlock(analysis.displayMatchedComponents, { stdout });
       }
 
-      if (analysis.unmatchedLines.length > 0) {
-        stdout.write(`Rules needing review (${analysis.unmatchedLines.length}):\n`);
-        for (const line of analysis.unmatchedLines) {
+      if (analysis.displayedUnmatchedLines.length > 0) {
+        stdout.write(`Rules needing review (${analysis.displayedUnmatchedLines.length}):\n`);
+        for (const line of analysis.displayedUnmatchedLines) {
           stdout.write(`  ${line}\n`);
         }
         stdout.write('\n');
@@ -169,7 +174,11 @@ async function runAdoptWorkflow(options, env) {
   // resolvePresetComponents errors propagate before the config is built — a
   // missing preset must not silently produce wrong custom rules.
   if (analysis) {
-    const selectedComponentIds = new Set([...(options.components || []), ...presetComponents]);
+    const excludeSet = new Set(options.exclude || []);
+    const selectedComponentIds = new Set([
+      ...(options.components || []),
+      ...presetComponents.filter(id => !excludeSet.has(id))
+    ]);
     // Build the covered-rule set using trimmed keys so that whitespace
     // differences between the component file and the user's .gitignore do
     // not prevent a match. A rule like "logs/" in the component covers
@@ -180,6 +189,22 @@ async function runAdoptWorkflow(options, env) {
       const result = analysis.componentResults.get(id);
       if (result) {
         for (const line of result.matched) coveredRules.add(normalizePattern(line));
+      } else {
+        // Component has zero overlap with the existing .gitignore (not in
+        // componentResults). Its rules are still "covered" by the selection
+        // and must not be duplicated in config.custom. Resolve the component
+        // content and add all its rules to coveredRules.
+        try {
+          const content = resolver.readComponent(id);
+          for (const line of parseSignificantLines(content)) {
+            coveredRules.add(normalizePattern(line));
+          }
+        } catch (err) {
+          // Component may not exist or be unreadable — skip gracefully.
+          // If the component is missing, the generator will also skip it,
+          // so there is no duplication risk.
+          debugError(err, 'adopt.coveredRules', env);
+        }
       }
     }
 

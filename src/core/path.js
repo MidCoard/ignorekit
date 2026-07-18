@@ -20,6 +20,15 @@ function assertDefinitionId(id) {
   // access to the definitions root (already a trusted operation). Tightening
   // the regex to reject dots would break legitimate component names that
   // include file extensions.
+  //
+  // Additional guards reject IDs that would normalize to the same path as
+  // another ID: double slashes (e.g. "a//b" normalizes to "a/b"), dot-segment
+  // prefixes (e.g. "./a" normalizes to "a"), and trailing slashes (e.g. "a/"
+  // normalizes to "a"). Without these, two different IDs could resolve to the
+  // same file, causing ambiguous lookups.
+  if (id.includes('//') || id.startsWith('./') || id.endsWith('/')) {
+    throw new Error(`Invalid definition id: ${id}`);
+  }
   if (!definitionIdPattern.test(id) || id.includes('..') || id.startsWith('.')) {
     throw new Error(`Invalid definition id: ${id}`);
   }

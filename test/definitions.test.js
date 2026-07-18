@@ -428,3 +428,81 @@ test('findDefinition still returns DefinitionNotFoundError for genuinely missing
     workspace.cleanup();
   }
 });
+
+// --- #5 (P1): findDefinition must check file size before reading ---
+
+test('findDefinition rejects oversized component files via checkSize', () => {
+  const { MAX_CONTENT_BYTES } = require('../src/core/constants');
+  const workspace = createTempWorkspace();
+  try {
+    const padding = '\n'.repeat(MAX_CONTENT_BYTES + 1);
+    workspace.writeText('dist/components/local/huge.gitignore', 'rule/\n' + padding);
+
+    const resolver = createDefinitionResolver({ distRoot: workspace.path('dist') });
+    assert.throws(
+      () => resolver.readComponent('local/huge'),
+      /too large|EFILETOOLARGE/
+    );
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('findDefinition rejects oversized preset JSON files via checkSize', () => {
+  const { MAX_CONTENT_BYTES } = require('../src/core/constants');
+  const workspace = createTempWorkspace();
+  try {
+    const padding = '\n'.repeat(MAX_CONTENT_BYTES + 1);
+    workspace.writeText('dist/presets/huge.json', '{"name":"huge","components":[]}' + padding);
+
+    const resolver = createDefinitionResolver({ distRoot: workspace.path('dist') });
+    assert.throws(
+      () => resolver.readPreset('huge'),
+      /too large|EFILETOOLARGE/
+    );
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #10 (P1): resolvePresetComponents must deduplicate when preset has no base ---
+
+test('resolvePresetComponents deduplicates own components when no base', () => {
+  const { resolvePresetComponents } = require('../src/definitions/resolver');
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeJson('dist/presets/dup.json', {
+      name: 'dup',
+      components: ['language/node', 'language/node', 'platform/macos']
+    });
+
+    const resolver = createDefinitionResolver({ distRoot: workspace.path('dist') });
+    const result = resolvePresetComponents(resolver, 'dup');
+    // Duplicate 'language/node' must appear only once
+    assert.deepEqual(result, ['language/node', 'platform/macos']);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #11 (P1): readPreset JSON.parse errors must include file path ---
+
+test('readPreset includes file path in error for malformed JSON', () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/presets/bad.json', '{invalid json!!!');
+
+    const resolver = createDefinitionResolver({ distRoot: workspace.path('dist') });
+    let caught = null;
+    try {
+      resolver.readPreset('bad');
+    } catch (err) {
+      caught = err;
+    }
+    assert.ok(caught, 'readPreset should throw for malformed JSON');
+    assert.match(caught.message, /bad\.json/,
+      `error message must include the file path, got: ${caught.message}`);
+  } finally {
+    workspace.cleanup();
+  }
+});

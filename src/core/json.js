@@ -30,6 +30,7 @@ function readJson(filePath) {
   } catch (error) {
     const wrapped = new Error(`Failed to read JSON ${filePath}: ${error.message}`);
     if (error.code) wrapped.code = error.code;
+    wrapped.cause = error;
     throw wrapped;
   }
 }
@@ -80,4 +81,4 @@ function writeJson(filePath, value) {
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2) + '\n', 'utf8');
 }
 
-module.exports = { readJson, readJsonOrNull, writeJson };
+module.exports = { checkSize, readJson, readJsonOrNull, writeJson };

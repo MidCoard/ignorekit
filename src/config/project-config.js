@@ -12,6 +12,9 @@ function normalizeStringArray(value, field) {
   if (value.some(entry => typeof entry !== 'string')) {
     throw new Error(`config.${field} must contain only strings`);
   }
+  if (value.some(entry => entry.trim() === '')) {
+    throw new Error(`config.${field} must not contain empty or whitespace-only strings`);
+  }
   return value;
 }
 

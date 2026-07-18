@@ -589,6 +589,121 @@ test('adopt without --apply shows preview but does not write files', async () =>
   }
 });
 
+// --- #6 (P1): --exclude must filter preset components from selectedComponentIds ---
+
+test('adopt --exclude prevents excluded component rules from being treated as covered', async () => {
+  // When a component is excluded via --exclude, its rules should NOT be
+  // considered "covered" by the preset. Without the fix, excluded components'
+  // rules were added to coveredRules, so custom rules matching those components
+  // were silently dropped from config.custom.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/platform/macos.gitignore', '.DS_Store\n');
+    workspace.writeText('dist/components/platform/windows.gitignore', 'Thumbs.db\n');
+    workspace.writeJson('dist/presets/generic.json', {
+      name: 'generic',
+      components: ['platform/macos', 'platform/windows']
+    });
+    // .gitignore has both macos and windows rules, plus a custom rule
+    workspace.writeText('project/.gitignore', '.DS_Store\nThumbs.db\ncustom-rule/\n');
+
+    // Exclude platform/windows — its rules should NOT be covered
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'generic',
+      '--exclude', 'platform/windows',
+      '--dist-root', workspace.path('dist'), '--overwrite-config', '--apply'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    const config = JSON.parse(fs.readFileSync(workspace.path('project/ignorekit.json'), 'utf8'));
+    // Thumbs.db must be in custom (windows was excluded, so its rule is not covered)
+    assert.ok(config.custom.some(r => r.trim() === 'Thumbs.db'),
+      `Thumbs.db should be in custom since platform/windows was excluded; got: ${JSON.stringify(config.custom)}`);
+    // .DS_Store should NOT be in custom (platform/macos is still included)
+    assert.ok(!config.custom.some(r => r.trim() === '.DS_Store'),
+      `.DS_Store should be covered by platform/macos; got: ${JSON.stringify(config.custom)}`);
+    // custom-rule should be in custom
+    assert.ok(config.custom.some(r => r.trim() === 'custom-rule/'),
+      `custom-rule/ should be in custom; got: ${JSON.stringify(config.custom)}`);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #7 (P1): extra components with zero overlap must be accounted for in coveredRules ---
+
+test('adopt carries forward rules from extra components that have zero overlap with existing .gitignore', async () => {
+  // When an extra component (--component) has zero matched lines in the
+  // analysis, its rules were not added to coveredRules, causing them to be
+  // duplicated in the generated .gitignore (once from the component, once
+  // from config.custom).
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n*.log\n');
+    workspace.writeText('dist/components/local/secrets.gitignore', '.env\n*.pem\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    // .gitignore has logs rules and secrets rules
+    workspace.writeText('project/.gitignore', 'logs/\n*.log\n.env\n*.pem\ncustom-rule/\n');
+
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'demo',
+      '--component', 'local/secrets',
+      '--dist-root', workspace.path('dist'), '--overwrite-config', '--apply'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    const config = JSON.parse(fs.readFileSync(workspace.path('project/ignorekit.json'), 'utf8'));
+    // .env and *.pem should NOT be in custom — they are covered by local/secrets
+    assert.ok(!config.custom.some(r => r.trim() === '.env'),
+      `.env should be covered by local/secrets; got: ${JSON.stringify(config.custom)}`);
+    assert.ok(!config.custom.some(r => r.trim() === '*.pem'),
+      `*.pem should be covered by local/secrets; got: ${JSON.stringify(config.custom)}`);
+    // custom-rule should be in custom
+    assert.ok(config.custom.some(r => r.trim() === 'custom-rule/'),
+      `custom-rule/ should be in custom; got: ${JSON.stringify(config.custom)}`);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+// --- #8 (P1): analysis failure must warn about custom rules being lost ---
+
+test('adopt warns when analysis fails and .gitignore exists', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    // Create a .gitignore larger than the 1 MiB guard to trigger analysis failure
+    const padding = '\n'.repeat(2 * 1024 * 1024);
+    workspace.writeText('project/.gitignore', 'logs/\ncustom-rule/\n' + padding);
+
+    const errors = [];
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'demo',
+      '--dist-root', workspace.path('dist'), '--apply'
+    ], {
+      stdout: { write: () => {} },
+      stderr: { write: (text) => errors.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0, `expected exit 0; stderr: ${errors.join('')}`);
+    // Must warn that custom rules will not be carried forward
+    assert.match(errors.join(''), /custom rules will NOT be carried forward/i,
+      'should warn about custom rules being lost when analysis fails');
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 // --- #2 (P1): adopt must guard analyzeGitignore against oversized files ---
 
 test('adopt degrades gracefully when .gitignore is too large to analyze', async () => {

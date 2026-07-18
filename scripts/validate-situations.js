@@ -141,6 +141,12 @@ function validateConfig(data, label, context) {
     }
   }
 
+  if (Array.isArray(config.exclude)) {
+    for (const component of config.exclude) {
+      assertComponent(component, `${label}: config.exclude`, context, data);
+    }
+  }
+
   if (config.provider) {
     const providerErrors = validateProviderConfig(config.provider);
     for (const error of providerErrors) {

@@ -17,6 +17,7 @@ const { promptComponentCreation, promptPresetCreation } = require('./interactive
 const { runExplainWorkflow } = require('./workflows/explain');
 const { runAnalyzeWorkflow, analyzeGitignore } = require('./workflows/analyze');
 const { debugError } = require('./core/debug');
+const { extractStreams } = require('./core/env');
 
 // --- Argument parsing ---
 
@@ -338,7 +339,7 @@ Examples:
 function commandList(args, env) {
   const options = applyUserRootDefault(parseArgs(args));
   const target = options._[0] || 'all';
-  const stdout = env.stdout || process.stdout;
+  const { stdout, stderr } = extractStreams(env);
 
   const resolver = buildResolver({ options, env });
 
@@ -494,9 +495,10 @@ async function pickPresetInteractive(options, env) {
   );
 
   if (answer === null) {
-    // runWithQuestions gave up under non-interactive mode and there's no safe
-    // default to fall back on. Surface this so the caller can exit with a
-    // helpful error rather than silently printing exit 1 with no stderr.
+    // runWithQuestions gave up under non-interactive mode. When a safe default
+    // exists (suggestion or 'generic'), use it so CI pipelines can proceed
+    // without --preset when a reasonable default is available.
+    if (safeDefault) return safeDefault;
     stderr.write('No default preset available. Pass --preset <name> explicitly.\n');
     return null;
   }
@@ -535,8 +537,8 @@ async function pickPresetInteractive(options, env) {
  * stdin is not a TTY (piped/test input).
  */
 function buildCreateEnv(env, skipConfirm) {
-  const stdout = env.stdout || process.stdout;
-  const result = { stdout, stderr: env.stderr || process.stderr, cwd: env.cwd };
+  const { stdout, stderr, cwd } = extractStreams(env);
+  const result = { stdout, stderr, cwd };
 
   // Preserve ask and stdin so interactive flows (promptComponentCreation,
   // promptPresetCreation) can use them directly from the env object. Without
@@ -558,8 +560,8 @@ function buildCreateEnv(env, skipConfirm) {
  * across both the init and adopt command paths.
  */
 function buildPickerEnv(env) {
-  const stdout = env.stdout || process.stdout;
-  return { stdout, stderr: env.stderr || process.stderr, cwd: env.cwd, stdin: env.stdin, ask: env.ask };
+  const { stdout, stderr, cwd } = extractStreams(env);
+  return { stdout, stderr, cwd, stdin: env.stdin, ask: env.ask };
 }
 
 // --- Command dispatch ---

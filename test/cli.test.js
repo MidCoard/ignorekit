@@ -92,6 +92,35 @@ test('unknown command returns exit code 1', async () => {
 
 // --- List ---
 
+test('list does not crash with ReferenceError when a preset has a broken base chain', async () => {
+  // When resolvePresetChain throws (e.g. a preset references a nonexistent base),
+  // the catch block in commandList uses stderr. Before the fix, stderr was never
+  // extracted from env, causing a ReferenceError that crashed the entire list
+  // command instead of gracefully degrading.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/language/node.gitignore', 'node_modules/\n');
+    workspace.writeJson('dist/presets/node.json', { name: 'node', components: ['language/node'] });
+    workspace.writeJson('dist/presets/broken.json', { name: 'broken', base: 'nonexistent-base', components: [] });
+
+    const errors = [];
+    const writes = [];
+    const result = await runCli(['list', '--dist-root', workspace.path('dist')], {
+      stdout: { write: (text) => writes.push(String(text)) },
+      stderr: { write: (text) => errors.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0, `list must not crash; stderr: ${errors.join('')}`);
+    const output = writes.join('');
+    // Both presets should still be listed — the broken one degrades gracefully
+    assert.match(output, /node/);
+    assert.match(output, /broken/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('list shows components and presets', async () => {
   const workspace = createListFixture();
   try {
@@ -816,6 +845,59 @@ test('init --preset-less under IGNOREKIT_NONINTERACTIVE prints stderr guidance a
       if (prev === undefined) delete process.env.IGNOREKIT_NONINTERACTIVE;
       else process.env.IGNOREKIT_NONINTERACTIVE = prev;
     }
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('pickPresetInteractive returns safeDefault when answer is null and generic preset exists', async () => {
+  // Under non-interactive mode (CI), runWithQuestions returns null for ask().
+  // When a safe default exists (e.g. 'generic' preset), the picker must return
+  // it instead of giving up. Without the fix, the picker unconditionally wrote
+  // "No default preset available" and returned null even when 'generic' was
+  // available.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeJson('dist/presets/generic.json', { name: 'generic', components: [] });
+
+    const { pickPresetInteractive } = require('../src/cli');
+    const result = await pickPresetInteractive(
+      { distRoot: workspace.path('dist') },
+      {
+        stdout: { write: () => {} },
+        stdin: { isTTY: true },
+        ask: async () => null  // non-interactive: null answer
+      }
+    );
+
+    assert.equal(result, 'generic',
+      `expected 'generic' when safeDefault exists and answer is null, got ${result}`);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('pickPresetInteractive returns suggestion when answer is null and no generic but suggestion exists', async () => {
+  // When there's no 'generic' preset but the analysis found a suggestion,
+  // the picker must return the suggestion under non-interactive mode.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeJson('dist/presets/alpha.json', { name: 'alpha', components: [] });
+    // No 'generic' preset
+
+    const { pickPresetInteractive } = require('../src/cli');
+    const result = await pickPresetInteractive(
+      { distRoot: workspace.path('dist'), projectPath: '.' },
+      {
+        stdout: { write: () => {} },
+        stdin: { isTTY: true },
+        ask: async () => null
+      }
+    );
+
+    // No suggestion was found (no .gitignore to analyze), so null is correct
+    assert.equal(result, null,
+      'expected null when no safeDefault and no suggestion, answer is null');
   } finally {
     workspace.cleanup();
   }

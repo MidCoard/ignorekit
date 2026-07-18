@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { listDefinitions } = require('../core/fs');
 const { assertDefinitionId, resolveInside } = require('../core/path');
+const { checkSize } = require('../core/json');
 const { debugError } = require('../core/debug');
 
 /**
@@ -90,6 +91,7 @@ function createDefinitionResolver(options = {}) {
     for (const root of [...layers].reverse()) {
       try {
         const filePath = resolveInside(root, path.join(kind, `${id}${extension}`));
+        checkSize(filePath);
         const content = fs.readFileSync(filePath, 'utf8');
         return { filePath, content };
       } catch (err) {
@@ -133,8 +135,15 @@ function createDefinitionResolver(options = {}) {
       return content;
     },
     readPreset(id) {
-      const { content } = findDefinition('presets', id, '.json');
-      return JSON.parse(content);
+      const { content, filePath } = findDefinition('presets', id, '.json');
+      try {
+        return JSON.parse(content);
+      } catch (err) {
+        const wrapped = new Error(`Failed to parse preset JSON ${filePath}: ${err.message}`);
+        if (err.code) wrapped.code = err.code;
+        wrapped.cause = err;
+        throw wrapped;
+      }
     },
     hasComponent(id) {
       try {
@@ -193,7 +202,7 @@ function resolvePresetComponents(resolver, presetId, visited = new Set()) {
   const ownComponents = Array.isArray(preset.components) ? preset.components : [];
 
   if (!preset.base) {
-    return [...ownComponents];
+    return [...new Set(ownComponents)];
   }
 
   const baseComponents = resolvePresetComponents(resolver, preset.base, visited);
