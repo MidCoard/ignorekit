@@ -64,6 +64,8 @@ function validateProviderConfig(provider, providerName) {
       errors.push(`provider "${name}" requires non-empty templates`);
     } else if (provider.templates.some(t => typeof t !== 'string')) {
       errors.push(`provider "${name}" templates must contain only strings`);
+    } else if (provider.templates.some(t => t.trim() === '')) {
+      errors.push(`provider "${name}" templates must not contain empty or whitespace-only names`);
     }
   }
   return errors;

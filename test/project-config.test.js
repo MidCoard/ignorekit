@@ -716,6 +716,28 @@ test('validateProviderConfig returns clear error when provider name is not a str
   assert.match(errors[0], /provider name is required/);
 });
 
+// --- #11 (P1): validateProviderConfig must reject empty/whitespace template names ---
+
+test('validateProviderConfig rejects empty string template names', () => {
+  const { validateProviderConfig } = require('../src/core/constants');
+  const errors = validateProviderConfig({ name: 'gitignore.io', templates: ['Node', ''] });
+  assert.ok(errors.length > 0, 'should report error for empty template name');
+  assert.match(errors[0], /empty or whitespace/i);
+});
+
+test('validateProviderConfig rejects whitespace-only template names', () => {
+  const { validateProviderConfig } = require('../src/core/constants');
+  const errors = validateProviderConfig({ name: 'gitignore.io', templates: ['  ', 'Node'] });
+  assert.ok(errors.length > 0, 'should report error for whitespace-only template name');
+  assert.match(errors[0], /empty or whitespace/i);
+});
+
+test('validateProviderConfig accepts valid template names alongside non-empty strings', () => {
+  const { validateProviderConfig } = require('../src/core/constants');
+  const errors = validateProviderConfig({ name: 'gitignore.io', templates: ['Node', 'Python'] });
+  assert.deepEqual(errors, []);
+});
+
 // --- #4: .env detection pattern must match indented lines ---
 
 test('buildGitignoreIoProviderText detects .env pattern with leading whitespace', async () => {

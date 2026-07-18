@@ -93,9 +93,14 @@ function createDefinitionResolver(options = {}) {
         const content = fs.readFileSync(filePath, 'utf8');
         return { filePath, content };
       } catch (err) {
-        // Layer is optional; missing files are expected. DEBUG-LOG: surface
-        // the file path under IGNOREKIT_DEBUG so a misconfigured root is
-        // visible without changing the lookup contract.
+        // Only ENOENT (file not found) is expected — optional layers may not
+        // contain the requested definition, so the search continues to the
+        // next layer. Other errors (EACCES, EISDIR, etc.) indicate a real
+        // problem that the caller needs to know about; re-throwing them
+        // prevents silently masking permission issues as "definition not found".
+        if (err.code !== 'ENOENT') throw err;
+        // DEBUG-LOG: surface the file path under IGNOREKIT_DEBUG so a
+        // misconfigured root is visible without changing the lookup contract.
         debugError(err, `resolver.read.${kind}`, resolverEnv);
         continue;
       }
@@ -159,6 +164,21 @@ function createDefinitionResolver(options = {}) {
 }
 
 /**
+ * Check for circular preset inheritance. Throws if the preset has already
+ * been visited in the current resolution chain. Shared by
+ * resolvePresetComponents and resolvePresetChain so the circular-detection
+ * logic and error message are defined in one place.
+ * @param {string} presetId - Preset being entered
+ * @param {Set<string>} visited - Presets already seen in this chain
+ */
+function checkCircular(presetId, visited) {
+  if (visited.has(presetId)) {
+    throw new Error(`Circular preset inheritance: ${[...visited, presetId].join(' → ')}`);
+  }
+  visited.add(presetId);
+}
+
+/**
  * Walk the preset base chain and return the fully resolved, deduplicated component list.
  * Base components come first, then own components. Duplicates are removed (first occurrence wins).
  * @param {object} resolver - A definition resolver with readPreset()
@@ -167,10 +187,7 @@ function createDefinitionResolver(options = {}) {
  * @returns {string[]} Resolved component IDs
  */
 function resolvePresetComponents(resolver, presetId, visited = new Set()) {
-  if (visited.has(presetId)) {
-    throw new Error(`Circular preset inheritance: ${[...visited, presetId].join(' → ')}`);
-  }
-  visited.add(presetId);
+  checkCircular(presetId, visited);
 
   const preset = resolver.readPreset(presetId);
   const ownComponents = Array.isArray(preset.components) ? preset.components : [];
@@ -201,10 +218,7 @@ function resolvePresetComponents(resolver, presetId, visited = new Set()) {
  * @returns {string[]} Inheritance chain from root to leaf
  */
 function resolvePresetChain(resolver, presetId, visited = new Set()) {
-  if (visited.has(presetId)) {
-    throw new Error(`Circular preset inheritance: ${[...visited, presetId].join(' → ')}`);
-  }
-  visited.add(presetId);
+  checkCircular(presetId, visited);
 
   const preset = resolver.readPreset(presetId);
   if (!preset.base) {

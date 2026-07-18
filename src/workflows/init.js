@@ -7,6 +7,7 @@ const { buildProjectConfig } = require('../config/build-config');
 const { buildResolver } = require('../core/resolver-factory');
 const { generateGitignore } = require('../generator');
 const { getGitState, ensureGitRepo } = require('../git');
+const { extractStreams } = require('../core/env');
 
 /**
  * Run the init workflow.
@@ -37,8 +38,8 @@ const { getGitState, ensureGitRepo } = require('../git');
  * @returns {Promise<{ projectPath: string, configPath: string|null, git: object|null }>}
  */
 async function runInitWorkflow(options, env) {
-  const stdout = env.stdout || process.stdout;
-  const projectPath = path.resolve(env.cwd || process.cwd(), options.projectPath);
+  const { stdout, cwd } = extractStreams(env);
+  const projectPath = path.resolve(cwd, options.projectPath);
   fs.mkdirSync(projectPath, { recursive: true });
 
   const config = buildProjectConfig(path.basename(projectPath), options);

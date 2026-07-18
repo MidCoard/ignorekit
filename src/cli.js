@@ -538,6 +538,12 @@ function buildCreateEnv(env, skipConfirm) {
   const stdout = env.stdout || process.stdout;
   const result = { stdout, stderr: env.stderr || process.stderr, cwd: env.cwd };
 
+  // Preserve ask and stdin so interactive flows (promptComponentCreation,
+  // promptPresetCreation) can use them directly from the env object. Without
+  // these, the create command's interactive path has no way to prompt the user.
+  if (env.ask) result.ask = env.ask;
+  if (env.stdin) result.stdin = env.stdin;
+
   if (skipConfirm) return result;
   if (env.confirm) { result.confirm = env.confirm; return result; }
 
@@ -694,10 +700,13 @@ async function runCli(args, env = {}) {
         options.name = options._[0];
         options.rules = collectRepeated(args.slice(2), '--rule');
         if (!options.name) {
+          // Use the same env construction for the interactive path as for the
+          // write path (createEnv), so the create command has a consistent env
+          // shape throughout. The ask callback from runWithQuestions overrides
+          // createEnv.ask so that readline-driven prompts work correctly with
+          // both env.ask and piped stdin.
           const interactiveEnv = { stdin: env.stdin, stdout, stderr, cwd: env.cwd, ask: env.ask };
-          const draft = await runWithQuestions(interactiveEnv, ask => promptComponentCreation(options, {
-            cwd: env.cwd || process.cwd(), stdout, stderr, ask
-          }));
+          const draft = await runWithQuestions(interactiveEnv, ask => promptComponentCreation(options, { ...createEnv, ask }));
           if (!draft) return { exitCode: 1 };
           options = { ...options, ...draft };
         }
@@ -709,9 +718,7 @@ async function runCli(args, env = {}) {
         options.components = collectRepeated(args.slice(2), '--component');
         if (!options.name) {
           const interactiveEnv = { stdin: env.stdin, stdout, stderr, cwd: env.cwd, ask: env.ask };
-          const draft = await runWithQuestions(interactiveEnv, ask => promptPresetCreation(options, {
-            cwd: env.cwd || process.cwd(), stdout, stderr, ask
-          }));
+          const draft = await runWithQuestions(interactiveEnv, ask => promptPresetCreation(options, { ...createEnv, ask }));
           if (!draft) return { exitCode: 1 };
           options = { ...options, ...draft };
         }

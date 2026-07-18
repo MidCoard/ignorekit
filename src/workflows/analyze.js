@@ -11,6 +11,7 @@ const { detectProjectSignals } = require('../detection/project-signals');
 const { formatMatchedComponentsTable } = require('./_format');
 const { debugError } = require('../core/debug');
 const { MAX_CONTENT_BYTES } = require('../core/constants');
+const { extractStreams } = require('../core/env');
 
 /**
  * Compute match result for a component against input lines.
@@ -318,8 +319,7 @@ function analyzeGitignore(options, env) {
  * @returns {{ totalLines: number, matchedComponents: object[], unmatchedLines: string[], bestPreset: object|null }}
  */
 function runAnalyzeWorkflow(options, env) {
-  const stdout = env.stdout || process.stdout;
-  const cwd = env.cwd || process.cwd();
+  const { stdout, cwd } = extractStreams(env);
 
   const analysis = analyzeGitignore({
     gitignorePath: path.resolve(cwd, options.gitignorePath),

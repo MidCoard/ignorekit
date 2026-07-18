@@ -1,13 +1,18 @@
 'use strict';
 
 const { normalizeText } = require('./core/text');
-const { normalizeProjectConfig } = require('./config/project-config');
 const { buildProviderText } = require('./providers');
 const { resolvePresetComponents } = require('./definitions/resolver');
 const { debugError } = require('./core/debug');
 
+/**
+ * Generate a .gitignore from a project config. Callers must pass an
+ * already-normalized config (via normalizeProjectConfig or buildProjectConfig).
+ * The generator does not re-normalize so that validation bugs in callers are
+ * caught immediately rather than masked by a second normalization pass.
+ */
 async function generateGitignore({ config, resolver, providerOptions = {}, env }) {
-  const normalized = normalizeProjectConfig(config);
+  const normalized = config;
   const presetComponents = normalized.preset
     ? resolvePresetComponents(resolver, normalized.preset)
     : [];
@@ -18,8 +23,10 @@ async function generateGitignore({ config, resolver, providerOptions = {}, env }
   const componentIds = [...new Set([...filteredPresetComponents, ...normalized.components])];
 
   // Resolve which components can be read — missing components are skipped
-  // rather than crashing the entire generation. This also avoids listing
-  // unreadable component IDs in the output header.
+  // rather than crashing the entire generation. After the loop, any
+  // components that could not be resolved are reported to stderr so the
+  // user knows their config references a component that doesn't exist,
+  // rather than silently getting a .gitignore that omits rules they expect.
   const resolvedIds = [];
   const resolvedContent = new Map();
   for (const componentId of componentIds) {
@@ -29,6 +36,19 @@ async function generateGitignore({ config, resolver, providerOptions = {}, env }
       resolvedContent.set(componentId, text);
     } catch (err) {
       debugError(err, 'generator.readComponent', env);
+    }
+  }
+
+  // Report missing components to stderr. Without this warning, a typo in
+  // ignorekit.json (e.g. "laguage/java" instead of "language/java") silently
+  // produces a .gitignore that omits the intended rules — the user sees no
+  // error and may not realize anything is wrong until rules they expected are
+  // missing from the generated output.
+  const missingIds = componentIds.filter(id => !resolvedIds.includes(id));
+  if (missingIds.length > 0) {
+    const stderr = (env && env.stderr) || process.stderr;
+    for (const id of missingIds) {
+      stderr.write(`Warning: component "${id}" not found — skipping.\n`);
     }
   }
 

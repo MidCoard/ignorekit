@@ -360,3 +360,71 @@ test('user root component overrides dist component with same id', () => {
     workspace.cleanup();
   }
 });
+
+// --- #3 (P1): findDefinition must re-throw EACCES, not mask it as "not found" ---
+
+test('findDefinition re-throws EACCES instead of masking it as "not found"', () => {
+  // When a definition file exists but is unreadable due to EACCES, the
+  // resolver must propagate the error rather than silently continuing to the
+  // next layer and eventually throwing DefinitionNotFoundError. Masking
+  // EACCES as "not found" hides permission problems that the user needs to
+  // know about.
+  const workspace = createTempWorkspace();
+  try {
+    // Create a component file, then make it unreadable by replacing
+    // readFileSync with a mock that throws EACCES.
+    workspace.writeText('dist/components/local/secret.gitignore', 'secret/\n');
+
+    const resolver = createDefinitionResolver({
+      distRoot: workspace.path('dist')
+    });
+
+    // Mock fs.readFileSync to throw EACCES for the secret component
+    const origReadFileSync = fs.readFileSync;
+    fs.readFileSync = function(path, encoding) {
+      if (path.includes('secret.gitignore')) {
+        const err = new Error('EACCES: permission denied');
+        err.code = 'EACCES';
+        throw err;
+      }
+      return origReadFileSync.apply(this, arguments);
+    };
+
+    try {
+      // readComponent should throw EACCES, not DefinitionNotFoundError
+      let caught = null;
+      try {
+        resolver.readComponent('local/secret');
+      } catch (err) {
+        caught = err;
+      }
+      assert.ok(caught, 'readComponent should throw for EACCES');
+      assert.equal(caught.code, 'EACCES',
+        `expected EACCES to propagate, got: ${caught.name}: ${caught.message}`);
+    } finally {
+      fs.readFileSync = origReadFileSync;
+    }
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('findDefinition still returns DefinitionNotFoundError for genuinely missing files', () => {
+  // After the EACCES fix, genuinely missing files (ENOENT) must still produce
+  // DefinitionNotFoundError, not EACCES or any other error.
+  const workspace = createTempWorkspace();
+  try {
+    const resolver = createDefinitionResolver({ distRoot: workspace.path('dist') });
+    let caught = null;
+    try {
+      resolver.readComponent('local/nonexistent');
+    } catch (err) {
+      caught = err;
+    }
+    assert.ok(caught, 'readComponent should throw for missing component');
+    assert.equal(caught.name, 'DefinitionNotFoundError',
+      `expected DefinitionNotFoundError, got: ${caught.name}: ${caught.message}`);
+  } finally {
+    workspace.cleanup();
+  }
+});

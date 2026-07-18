@@ -8,6 +8,8 @@ const { buildResolver } = require('../core/resolver-factory');
 const { analyzeGitignore } = require('../workflows/analyze');
 const { formatMatchedComponentsHeader } = require('../workflows/_format');
 const { debugError } = require('../core/debug');
+const { extractStreams } = require('../core/env');
+const { MAX_CONTENT_BYTES } = require('../core/constants');
 
 function normalizeAnswer(value) {
   return String(value == null ? '' : value).trim();
@@ -143,10 +145,38 @@ async function chooseRulesSmart(state, env) {
   let lines;
   let rawContent;
   try {
+    // Guard against pathological inputs before readFileSync buffers the entire
+    // file. A .gitignore is a small text file; anything past MAX_CONTENT_BYTES
+    // (1 MiB) is either a mistake or an attempt to exhaust memory. The guard
+    // here fires BEFORE the file content is read, unlike the size check inside
+    // analyzeGitignore which only runs after the content is already in memory.
+    // Matching the pattern from readJson/checkSize: throw with
+    // err.code = 'EFILETOOLARGE' so callers can distinguish "too large" from
+    // other read errors (ENOENT, EACCES).
+    const stat = fs.statSync(sourcePath);
+    if (stat.size > MAX_CONTENT_BYTES) {
+      const err = new Error(`Source file too large (${stat.size} bytes > ${MAX_CONTENT_BYTES}): ${sourcePath}`);
+      err.code = 'EFILETOOLARGE';
+      throw err;
+    }
     rawContent = fs.readFileSync(sourcePath, 'utf8');
     lines = parseSignificantLines(rawContent);
   } catch (err) {
-    throw new Error(`Cannot read source file ${sourcePath}: ${err.message}`);
+    // EFILETOOLARGE from the statSync guard: return null to signal fallback
+    // to inline rule entry, matching the behavior when analyzeGitignore
+    // rejects an oversized file. The statSync guard prevents the memory
+    // exhaustion that would occur if readFileSync buffered the entire file
+    // before the analyzeGitignore size check could fire.
+    if (err.code === 'EFILETOOLARGE') {
+      const { stderr: analysisStderr } = extractStreams(env);
+      analysisStderr.write(`Source file too large to read: ${err.message}\n`);
+      analysisStderr.write(`Falling back to inline rule entry.\n`);
+      debugError(err, 'choose-rules-smart.size-guard', env);
+      return null;
+    }
+    const wrapped = new Error(`Cannot read source file ${sourcePath}: ${err.message}`);
+    if (err.code) wrapped.code = err.code;
+    throw wrapped;
   }
   if (lines.length === 0) {
     env.stdout.write('Source file contains no rules.\n');
@@ -174,9 +204,9 @@ async function chooseRulesSmart(state, env) {
       projectPath: env.cwd
     }, { stderr: env.stderr });
   } catch (err) {
-    const stderr = env.stderr || process.stderr;
-    stderr.write(`Could not analyze ${path.basename(sourcePath)}: ${err.message}\n`);
-    stderr.write(`Falling back to inline rule entry.\n`);
+    const { stderr: analysisStderr } = extractStreams(env);
+    analysisStderr.write(`Could not analyze ${path.basename(sourcePath)}: ${err.message}\n`);
+    analysisStderr.write(`Falling back to inline rule entry.\n`);
     debugError(err, 'choose-rules-smart.analyze', env);
     return null;
   }
@@ -325,4 +355,4 @@ async function promptPresetCreation(options, env) {
   return state;
 }
 
-module.exports = { promptComponentCreation, promptPresetCreation, selectItems, parseToggleCommand, runToggleSelection, parseNumberRanges };
+module.exports = { promptComponentCreation, promptPresetCreation, selectItems, parseToggleCommand, runToggleSelection, parseNumberRanges, chooseRulesSmart };

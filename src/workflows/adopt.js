@@ -13,6 +13,7 @@ const { analyzeGitignore } = require('./analyze');
 const { normalizePattern } = require('../core/text');
 const { writeMatchedComponentsBlock } = require('./_format');
 const { debugError } = require('../core/debug');
+const { extractStreams } = require('../core/env');
 
 /**
  * Run the adopt workflow.
@@ -37,8 +38,8 @@ const { debugError } = require('../core/debug');
  * @returns {{ projectPath: string, configPath: string, cachedRemoval: object, analysis: object|null, warnings: string[] }}
  */
 async function runAdoptWorkflow(options, env) {
-  const stdout = env.stdout || process.stdout;
-  const projectPath = path.resolve(env.cwd || process.cwd(), options.projectPath);
+  const { stdout, stderr, cwd } = extractStreams(env);
+  const projectPath = path.resolve(cwd, options.projectPath);
   if (!fs.existsSync(projectPath)) {
     throw new Error(`Project path does not exist: ${projectPath}`);
   }
@@ -95,7 +96,6 @@ async function runAdoptWorkflow(options, env) {
         keepRawLines: true
       }, { stderr: env.stderr });
     } catch (err) {
-      const stderr = env.stderr || process.stderr;
       stderr.write(`Could not analyze existing .gitignore: ${err.message}\n`);
       stderr.write('Proceeding without analysis.\n');
       debugError(err, 'adopt.analyze', env);

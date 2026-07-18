@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { debugError } = require('./debug');
 
 function walkFiles(directory) {
   const entries = fs.readdirSync(directory, { withFileTypes: true });
@@ -28,10 +29,20 @@ function walkFiles(directory) {
 
 function listDefinitions(directory, extension) {
   if (!fs.existsSync(directory)) return [];
-  return walkFiles(directory)
-    .filter((file) => file.endsWith(extension))
-    .map((file) => path.relative(directory, file).replace(/\\/g, '/').replace(new RegExp(`\\${extension}$`), ''))
-    .sort();
+  try {
+    return walkFiles(directory)
+      .filter((file) => file.endsWith(extension))
+      .map((file) => path.relative(directory, file).replace(/\\/g, '/').replace(new RegExp(`\\${extension}$`), ''))
+      .sort();
+  } catch (err) {
+    // An EACCES (or similar) on a layer directory must not crash the entire
+    // resolution. Log under IGNOREKIT_DEBUG and return an empty list so the
+    // resolver continues with the remaining layers. Without this guard, a
+    // single unreadable directory (e.g. ~/.ignorekit with restrictive perms)
+    // prevents listing ANY definitions from ANY layer.
+    debugError(err, 'fs.listDefinitions');
+    return [];
+  }
 }
 
 module.exports = { walkFiles, listDefinitions };

@@ -7,6 +7,7 @@ const { resolvePresetComponents, resolvePresetChain } = require('../definitions/
 const { buildResolver } = require('../core/resolver-factory');
 const { parseSignificantLines } = require('../core/text');
 const { debugError } = require('../core/debug');
+const { extractStreams } = require('../core/env');
 
 /**
  * Format a brief summary of component content for the table.
@@ -81,9 +82,8 @@ function printComponentDetail(componentId, resolver, options, streams, resolvedC
  * @returns {{ project: string, preset: string|null, components: string[], customCount: number }}
  */
 function runExplainWorkflow(options, env) {
-  const stdout = env.stdout || process.stdout;
-  const stderr = env.stderr || process.stderr;
-  const configPath = path.resolve(env.cwd || process.cwd(), options.configPath);
+  const { stdout, stderr, cwd } = extractStreams(env);
+  const configPath = path.resolve(cwd, options.configPath);
   const rawConfig = readJson(configPath);
   const config = normalizeProjectConfig(rawConfig);
 

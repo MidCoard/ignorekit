@@ -6,6 +6,7 @@ const { assertDefinitionId, resolveInside, USER_ROOT } = require('../core/path')
 const { normalizeText, parseSignificantLines } = require('../core/text');
 const { analyzeGitignore } = require('./analyze');
 const { writeMatchedComponentsBlock } = require('./_format');
+const { extractStreams } = require('../core/env');
 
 function assertSegment(value, label) {
   if (!value || typeof value !== 'string' || value.includes('/')) {
@@ -44,13 +45,12 @@ function assertSegment(value, label) {
  * @returns {{ id: string, outputPath: string|null, rules: string[], analysis: object|null, warnings: string[] }}
  */
 async function runComponentCreate(options, env) {
-  const stdout = env.stdout || process.stdout;
-  const stderr = env.stderr || process.stderr;
+  const { stdout, stderr, cwd } = extractStreams(env);
   assertSegment(options.category, 'category');
   assertSegment(options.name, 'component name');
 
   const outputRoot = options.outputRoot
-    ? path.resolve(env.cwd || process.cwd(), options.outputRoot)
+    ? path.resolve(cwd, options.outputRoot)
     : USER_ROOT;
   const id = `${options.category}/${options.name}`;
   const outputPath = resolveInside(outputRoot, path.join('components', `${id}.gitignore`));
@@ -80,7 +80,7 @@ async function runComponentCreate(options, env) {
   // 1 MiB size guard). When that happens, the component cannot be extracted
   // automatically — surface the error so the user can use --rule instead.
   if (options.from && rules.length === 0) {
-    const sourcePath = path.resolve(env.cwd || process.cwd(), options.from);
+    const sourcePath = path.resolve(cwd, options.from);
     try {
       analysis = analyzeGitignore({
         gitignorePath: sourcePath,
@@ -90,7 +90,7 @@ async function runComponentCreate(options, env) {
         // The source .gitignore may be outside the project root (e.g. --from
         // pointing to an arbitrary file). Signal detection must run against the
         // actual project directory, not the directory containing the source file.
-        projectPath: env.cwd || process.cwd()
+        projectPath: cwd
       }, { stderr });
     } catch (err) {
       stderr.write(`Could not analyze ${path.basename(sourcePath)}: ${err.message}\n`);
@@ -168,7 +168,7 @@ async function runComponentCreate(options, env) {
   // Build content (smart extraction adds a header explaining what was extracted)
   let content;
   if (analysis) {
-    const sourceName = path.basename(path.resolve(env.cwd || process.cwd(), options.from));
+    const sourceName = path.basename(path.resolve(cwd, options.from));
     const headerLine = `# Extracted from ${sourceName} (unmatched rules only)`;
     content = normalizeText([headerLine, ...rules].join('\n'));
   } else {

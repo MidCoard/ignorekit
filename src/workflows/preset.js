@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { writeJson } = require('../core/json');
 const { assertDefinitionId, resolveInside, USER_ROOT } = require('../core/path');
+const { extractStreams } = require('../core/env');
 
 /**
  * Run the preset creation workflow.
@@ -24,11 +25,10 @@ const { assertDefinitionId, resolveInside, USER_ROOT } = require('../core/path')
  * @returns {{ outputPath: string|null, preset: object, resolvedComponents: string[] }}
  */
 async function runPresetCreate(options, env) {
-  const stdout = env.stdout || process.stdout;
-  const stderr = env.stderr || process.stderr;
+  const { stdout, stderr, cwd } = extractStreams(env);
   assertDefinitionId(options.name);
   const outputRoot = options.outputRoot
-    ? path.resolve(env.cwd || process.cwd(), options.outputRoot)
+    ? path.resolve(cwd, options.outputRoot)
     : USER_ROOT;
   // --user-root is a discovery source only. Without --output-root, the preset
   // is written to the personal definitions layer (~/.ignorekit) regardless of
