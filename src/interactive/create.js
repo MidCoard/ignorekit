@@ -264,8 +264,8 @@ async function promptComponentCreation(options, env) {
     : 'Source .gitignore (optional): ';
 
   const state = {
-    category: normalizeAnswer(await env.ask('Category (local): ')) || 'local',
-    name: normalizeAnswer(await env.ask('Component name: ')),
+    category: normalizeAnswer(await env.ask('Category [local]: ')) || 'local',
+    name: normalizeAnswer(await env.ask('Component name (e.g. runtime, secrets): ')),
     sourcePath: normalizeAnswer(await env.ask(sourcePrompt)) || defaultSourcePath,
     rules: [],
     // --user-root is a discovery layer for analysis only; the write destination

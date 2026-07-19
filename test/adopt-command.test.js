@@ -164,7 +164,7 @@ test('adopt fails before analysis/preview when config exists without --overwrite
       'adopt must not print analysis output when the config-overwrite guard will reject');
     assert.doesNotMatch(out, /Preset "demo" will add/,
       'adopt must not print preset-vs-analysis output when the config-overwrite guard will reject');
-    assert.doesNotMatch(out, /--- Preview ---/,
+    assert.doesNotMatch(out, /--- Preview/,
       'adopt must not show a preview when the config-overwrite guard will reject');
     assert.equal(askCalled, false,
       'adopt must not issue the confirm prompt when the config-overwrite guard will reject');
@@ -575,7 +575,7 @@ test('adopt without --apply shows preview but does not write files', async () =>
     assert.equal(result.exitCode, 0);
     const out = output.join('');
     // Preview must be shown
-    assert.match(out, /--- Preview ---/);
+    assert.match(out, /--- Preview/);
     // But no files should be written
     assert.equal(fs.existsSync(workspace.path('project/ignorekit.json')), false,
       'config must not be written without --apply');
@@ -862,7 +862,7 @@ test('adopt with nonexistent preset errors immediately without writing files', a
 test('adopt validates preset before showing analysis or preview output', async () => {
   // When a nonexistent preset is used with an existing .gitignore, the error
   // must fire BEFORE the analysis output ("Analyzing existing .gitignore",
-  // "Rules needing review") and BEFORE the preview ("--- Preview ---").
+  // "Rules needing review") and BEFORE the preview ("--- Preview (.gitignore) ---").
   // Showing analysis/preview for a preset that will ultimately fail is
   // misleading — the user sees "Preset will add N components" only to learn
   // the preset doesn't exist.
@@ -887,7 +887,7 @@ test('adopt validates preset before showing analysis or preview output', async (
     // The preset validation must fire before any analysis or preview output.
     assert.doesNotMatch(out, /Analyzing existing/,
       'must not show analysis output for an invalid preset');
-    assert.doesNotMatch(out, /--- Preview ---/,
+    assert.doesNotMatch(out, /--- Preview/,
       'must not show preview for an invalid preset');
     assert.doesNotMatch(out, /Preset "nonexistent-preset" will add/,
       'must not show preset-vs-analysis output for an invalid preset');

@@ -41,7 +41,7 @@ async function runAdoptWorkflow(options, env) {
   const { stdout, stderr, cwd } = extractStreams(env);
   const projectPath = path.resolve(cwd, options.projectPath);
   if (!fs.existsSync(projectPath)) {
-    throw new Error(`Project path does not exist: ${projectPath}`);
+    throw new Error(`Project path does not exist: ${projectPath}. Use 'ignorekit init' to create a new project.`);
   }
   if (options.removeCached && !options.apply) {
     throw new Error('--remove-cached requires --apply (which writes .gitignore and ignorekit.json) so cached file removal uses the generated .gitignore');
@@ -234,7 +234,7 @@ async function runAdoptWorkflow(options, env) {
   const gitignorePath = path.join(projectPath, '.gitignore');
 
   // Show preview in console
-  stdout.write(`\n--- Preview ---\n`);
+  stdout.write(`\n--- Preview (.gitignore) ---\n`);
   stdout.write(gitignore);
   stdout.write(`--- End preview ---\n\n`);
 
@@ -286,7 +286,7 @@ async function runAdoptWorkflow(options, env) {
   // that is both rare and recoverable.
   fs.writeFileSync(gitignorePath, gitignore, 'utf8');
 
-  stdout.write(`Generated .gitignore\n`);
+  stdout.write(`Generated .gitignore at ${gitignorePath}\n`);
 
   // Handle cached file removal
   let cachedRemoval = { action: 'skipped', files: [] };

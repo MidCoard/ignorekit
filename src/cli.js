@@ -8,6 +8,7 @@ const { normalizeProjectConfig } = require('./config/project-config');
 const { resolvePresetChain } = require('./definitions/resolver');
 const { buildResolver, applyUserRootDefault } = require('./core/resolver-factory');
 const { createConfirm, isInteractive, runWithQuestions, readAllLines } = require('./cli/prompt');
+const { version: VERSION } = require('../package.json');
 const { generateGitignore } = require('./generator');
 const { runInitWorkflow } = require('./workflows/init');
 const { runAdoptWorkflow } = require('./workflows/adopt');
@@ -111,6 +112,10 @@ Commands:
   init        Initialize a new project with config and .gitignore
   adopt       Adopt an existing project into ignorekit
   create      Create a component or preset definition
+
+Options:
+  --version   Print version and exit
+  --help      Show help (use --help <command> for details)
 
 Run 'ignorekit help <command>' for detailed usage.
 `);
@@ -259,6 +264,10 @@ Component options:
   --user-root <path>      User-level override directory (for analysis)
   --workspace-root <path> Workspace-level definition directory (for analysis)
 
+  The positional name can include a category prefix using slash syntax:
+  "local/runtime" is equivalent to --category local --name runtime.
+  When both the slash syntax and --category are provided, --category wins.
+
   When --from is used, the source .gitignore is analyzed against known
   components and only the unmatched (custom) rules are extracted. Pass
   --rule for literal rules (no analysis).
@@ -277,7 +286,7 @@ Preset options:
 
 Examples:
   ignorekit create component runtime --category local --from ./.gitignore
-  ignorekit create component runtime --category local --from ./.gitignore --yes
+  ignorekit create component local/runtime --from ./.gitignore --yes
   ignorekit create component docker --category deployment --rule docker-compose.override.yml
   ignorekit create preset team-vite --base vite --component local/runtime
 `,
@@ -329,7 +338,8 @@ Examples:
   if (text) {
     stdout.write(text);
   } else {
-    stdout.write(`No help available for '${command}'.\n\n`);
+    const validCommands = Object.keys(helps).join(', ');
+    stdout.write(`No help available for '${command}'.\n\nValid commands: ${validCommands}\n\n`);
     printGeneralHelp(stdout);
   }
 }
@@ -580,6 +590,12 @@ async function runCli(args, env = {}) {
   const command = args[0] || 'help';
 
   try {
+    // Version
+    if (command === '--version' || command === '-v') {
+      stdout.write(`ignorekit v${VERSION}\n`);
+      return { exitCode: 0 };
+    }
+
     // Help
     if (command === 'help' || command === '--help' || command === '-h') {
       const subcommand = args[1];

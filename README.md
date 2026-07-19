@@ -2,6 +2,16 @@
 
 A cross-platform CLI tool for building `.gitignore` files from composable components and presets. Zero runtime dependencies, Node.js >= 18.
 
+## Quick start
+
+```bash
+npm install -g ignorekit
+
+ignorekit init ./my-project --preset node --git   # new project
+ignorekit adopt --preset vite --apply              # existing project
+ignorekit generate ./ignorekit.json                # rebuild .gitignore
+```
+
 ## How it works
 
 ```
@@ -119,6 +129,7 @@ Matches lines against known components, shows coverage, identifies custom rules,
 ```bash
 ignorekit create component                                       # guided rule selection and review
 ignorekit create component runtime --category local --from ./.gitignore
+ignorekit create component local/runtime --from ./.gitignore     # category/name shorthand
 ignorekit create component docker --category deployment --rule docker-compose.override.yml
 ignorekit create component runtime --category local --rule foo --rule bar   # literal rules
 ignorekit create preset                                          # guided base and component selection
@@ -126,7 +137,9 @@ ignorekit create preset team-vite --base vite --component local/runtime
 ```
 
 Components use a separate category and name; `runtime` with category `local`
-is stored as `components/local/runtime.gitignore`. Guided creation lists every
+is stored as `components/local/runtime.gitignore`. The positional name can
+include a category prefix using slash syntax: `local/runtime` is equivalent
+to `--category local --name runtime`. Guided creation lists every
 candidate rule or component, lets you choose a subset, then shows the final
 output path before it writes anything.
 
@@ -209,6 +222,13 @@ team shares definitions from another directory.
 
 AI tool components are opt-in. Add the tools your project actually uses as extra components in `ignorekit.json`.
 
+## Global flags
+
+| Flag | Effect |
+|------|--------|
+| `--version` | Print version and exit |
+| `--help` | Show help; `--help <command>` for per-command details |
+
 ## Environment variables
 
 | Variable | Effect |
@@ -218,9 +238,14 @@ AI tool components are opt-in. Add the tools your project actually uses as extra
 | `IGNOREKIT_NONINTERACTIVE` | When set, skips every interactive prompt (preset picker, guided creation, confirmations) instead of hanging. Returns an error if a required choice can't be defaulted. Honored in CI environments automatically. |
 | `CI` | Standard CI flag. Same effect as `IGNOREKIT_NONINTERACTIVE` — avoid interactive prompts. |
 
-## Running tests
+## Development
 
 ```bash
-npm run test:unit
-npm run validate:situations
+npm run test:unit         # run unit tests
+npm run validate:situations  # validate situation files
+npm test                  # both
 ```
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.

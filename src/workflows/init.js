@@ -56,11 +56,11 @@ async function runInitWorkflow(options, env) {
   // existing scripts and CI pipelines.
   const configPath = path.join(projectPath, 'ignorekit.json');
   if (fs.existsSync(configPath) && !options.overwrite) {
-    throw new Error(`Config already exists: ${configPath}`);
+    throw new Error(`Config already exists: ${configPath}. Use --overwrite to replace it.`);
   }
   const gitignorePath = path.join(projectPath, '.gitignore');
   if (fs.existsSync(gitignorePath) && !options.overwrite) {
-    throw new Error(`Ignore file already exists: ${gitignorePath}. Use --overwrite to replace it.`);
+    throw new Error(`.gitignore already exists: ${gitignorePath}. Use --overwrite to replace it.`);
   }
 
   if (options.git) {
@@ -74,7 +74,7 @@ async function runInitWorkflow(options, env) {
   const gitignore = await generateGitignore({ config, resolver, env });
 
   // Show preview in console before writing, matching the adopt workflow pattern.
-  stdout.write(`\n--- Preview ---\n`);
+  stdout.write(`\n--- Preview (.gitignore) ---\n`);
   stdout.write(gitignore);
   stdout.write(`--- End preview ---\n\n`);
 

@@ -136,7 +136,7 @@ test('init preserves an existing .gitignore without --overwrite', async () => {
     });
 
     assert.equal(result.exitCode, 1);
-    assert.match(errors.join(''), /Ignore file already exists/);
+    assert.match(errors.join(''), /\.gitignore already exists/);
     assert.equal(workspace.readText('project/.gitignore'), 'keep-this-rule\n');
     assert.equal(fs.existsSync(workspace.path('project/ignorekit.json')), false);
   } finally {

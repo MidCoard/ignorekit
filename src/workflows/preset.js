@@ -80,7 +80,7 @@ async function runPresetCreate(options, env) {
   }
 
   writeJson(outputPath, preset);
-  stdout.write(`\nCreated preset ${outputPath}\n`);
+  stdout.write(`\nCreated preset ${options.name} → ${outputPath}\n`);
   if (!options.outputRoot) {
     stdout.write(`  Preset is available to all projects via the user definitions layer.\n`);
   }

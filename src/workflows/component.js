@@ -180,11 +180,10 @@ async function runComponentCreate(options, env) {
 
   // Print results
   if (analysis) {
-    stdout.write(`\nExtracted component ${id}:\n`);
-    stdout.write(`  ${rules.length} unmatched rule(s) written to ${outputPath}\n`);
+    stdout.write(`\nExtracted component ${id} (${rules.length} rules) → ${outputPath}\n`);
     stdout.write(`  ${analysis.matchedComponents.reduce((s, c) => s + c.matched.length, 0)} rule(s) already covered by known components (not extracted)\n`);
   } else {
-    stdout.write(`\nCreated component ${id} at ${outputPath}\n`);
+    stdout.write(`\nCreated component ${id} (${rules.length} rules) → ${outputPath}\n`);
   }
 
   if (!options.outputRoot) {
