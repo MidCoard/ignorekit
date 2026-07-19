@@ -8,22 +8,19 @@ const { createTempWorkspace } = require('./helpers/temp-workspace');
 const { createDefinitionResolver } = require('../src/definitions/resolver');
 const { USER_ROOT } = require('../src/core/path');
 
-test('resolver reads components from dist, user, workspace, and project layers in priority order', () => {
+test('resolver reads components from dist, user, and workspace layers in priority order', () => {
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
     workspace.writeText('workspace/.ignorekit/components/local/logs.gitignore', 'workspace-logs/\n');
-    workspace.writeText('project/.ignorekit/components/project/runtime.gitignore', 'runtime/\n');
 
     const resolver = createDefinitionResolver({
       distRoot: workspace.path('dist'),
       userRoot: workspace.path('missing-user'),
-      workspaceRoot: workspace.path('workspace/.ignorekit'),
-      projectRoot: workspace.path('project/.ignorekit')
+      workspaceRoot: workspace.path('workspace/.ignorekit')
     });
 
     assert.equal(resolver.readComponent('local/logs').trim(), 'workspace-logs/');
-    assert.equal(resolver.readComponent('project/runtime').trim(), 'runtime/');
   } finally {
     workspace.cleanup();
   }
@@ -97,19 +94,16 @@ test('resolver lists definitions from all layers without duplicate ids', () => {
     workspace.writeText('dist/components/local/shared.gitignore', 'dist/\n');
     workspace.writeText('user/components/local/shared.gitignore', 'user/\n');
     workspace.writeText('workspace/components/local/workspace.gitignore', 'workspace/\n');
-    workspace.writeText('project/components/local/project.gitignore', 'project/\n');
     workspace.writeJson('dist/presets/base.json', { name: 'base', components: [] });
     workspace.writeJson('user/presets/personal.json', { name: 'personal', components: [] });
 
     const resolver = createDefinitionResolver({
       distRoot: workspace.path('dist'),
       userRoot: workspace.path('user'),
-      workspaceRoot: workspace.path('workspace'),
-      projectRoot: workspace.path('project')
+      workspaceRoot: workspace.path('workspace')
     });
 
     assert.deepEqual(resolver.listComponents(), [
-      'local/project',
       'local/shared',
       'local/workspace'
     ]);

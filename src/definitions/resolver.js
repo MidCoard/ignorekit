@@ -74,11 +74,14 @@ function createDefinitionResolver(options = {}) {
   // it. The dist CLI supplies ~/.ignorekit at the entry point (runCli) so its UX
   // is unchanged, while library consumers and tests get a pure resolver that
   // touches only the roots they name.
+  // Definition layers (lowest to highest priority):
+  //   dist      shipped presets/components/providers
+  //   user      ~/.ignorekit overrides and personal definitions
+  //   workspace <workspace>/.ignorekit org or workspace definitions
   const layers = [
     options.distRoot,
     options.userRoot,
-    options.workspaceRoot,
-    options.projectRoot
+    options.workspaceRoot
   ].filter(Boolean);
   // Capture env once at construction so debugError inside findDefinition can
   // route to the caller's stderr stream (e.g. a test's env.stderr) rather than

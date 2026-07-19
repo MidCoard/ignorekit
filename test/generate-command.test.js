@@ -34,7 +34,7 @@ test('generate writes .gitignore from a project config and does not require Git'
   }
 });
 
-test('generate reads project-local definitions from .ignorekit automatically', async () => {
+test('generate reads user-layer definitions for extra components', async () => {
   const workspace = createTempWorkspace();
   try {
     const configPath = workspace.writeJson('project/ignorekit.json', {
@@ -42,9 +42,9 @@ test('generate reads project-local definitions from .ignorekit automatically', a
       name: 'project',
       components: ['local/runtime']
     });
-    workspace.writeText('project/.ignorekit/components/local/runtime.gitignore', 'runtime-data/\n');
+    workspace.writeText('user/components/local/runtime.gitignore', 'runtime-data/\n');
 
-    const result = await runCli(['generate', configPath, '--dist-root', workspace.path('dist')], {
+    const result = await runCli(['generate', configPath, '--dist-root', workspace.path('dist'), '--user-root', workspace.path('user')], {
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.path('project')

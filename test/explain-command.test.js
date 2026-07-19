@@ -240,23 +240,23 @@ test('explain shows excluded components and filters them from output', () => {
   }
 });
 
-test('explain resolves project-layer definitions from .ignorekit subdirectory', () => {
+test('explain resolves user-layer definitions for extra components', () => {
   const workspace = createTempWorkspace();
   try {
-    // Dist has a preset but no project-specific component
+    // Dist has a preset but no user-specific component
     workspace.writeJson('dist/presets/demo.json', {
       name: 'demo',
       components: ['local/logs']
     });
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
-    // Project layer: a custom component inside .ignorekit/
-    workspace.writeText('project/.ignorekit/components/local/project-only.gitignore', 'project-only/\n');
+    // User layer: a custom component that the project references as extra
+    workspace.writeText('user/components/local/custom-rule.gitignore', 'custom-data/\n');
     workspace.writeJson('project/ignorekit.json', {
       version: 1,
       name: 'project-test',
       preset: 'demo',
       provider: { name: 'local' },
-      components: ['local/project-only'],
+      components: ['local/custom-rule'],
       custom: [],
       addons: {}
     });
@@ -265,15 +265,13 @@ test('explain resolves project-layer definitions from .ignorekit subdirectory', 
     const stdout = { write: (s) => { output += s; } };
 
     const result = runExplainWorkflow(
-      { configPath: workspace.path('project/ignorekit.json'), distRoot: workspace.path('dist') },
+      { configPath: workspace.path('project/ignorekit.json'), distRoot: workspace.path('dist'), userRoot: workspace.path('user') },
       { stdout, cwd: workspace.root }
     );
 
-    // The project-layer component must be resolved — if projectRoot pointed at
-    // the project directory instead of .ignorekit, the resolver would not find
-    // local/project-only and would throw "Unknown component".
+    // The user-layer component must be resolved
     assert.equal(result.components.length, 2);
-    assert.match(output, /local\/project-only/);
+    assert.match(output, /local\/custom-rule/);
   } finally {
     workspace.cleanup();
   }

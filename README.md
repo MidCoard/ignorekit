@@ -200,10 +200,8 @@ Projects use `ignorekit.json`:
 so a new `local/runtime` component or `team-stack` preset can be used straight
 away without extra flags.
 
-For a definition that belongs only to one repository, store it in
-`<project>/.ignorekit/components/` or `<project>/.ignorekit/presets/`. Commands
-run from that project discover it automatically. Use `--workspace-root` when a
-team shares definitions from another directory.
+For definitions shared across a team, use `--workspace-root` to point at a
+shared `.ignorekit` directory (e.g. in a monorepo or team config repo).
 
 ## Components
 
