@@ -36,7 +36,19 @@ function walkFiles(directory, depth = 0) {
   return files;
 }
 
-function listDefinitions(directory, extension) {
+/**
+ * List definition IDs found under a directory, filtered by extension.
+ * Returns relative paths (forward-slashed, extension-stripped) sorted alphabetically.
+ * Returns an empty array if the directory does not exist or is unreadable.
+ *
+ * @param {string} directory - Root directory to walk
+ * @param {string} extension - File extension to filter (e.g. '.gitignore', '.json')
+ * @param {object} [env] - Environment streams for debug routing. When provided,
+ *   debugError output from EACCES/similar errors routes to env.stderr instead of
+ *   leaking to process.stderr. The resolver passes its captured env so that tests
+ *   can intercept debug output; scripts that don't need capture can omit it.
+ */
+function listDefinitions(directory, extension, env) {
   if (!fs.existsSync(directory)) return [];
   try {
     return walkFiles(directory)
@@ -49,7 +61,7 @@ function listDefinitions(directory, extension) {
     // resolver continues with the remaining layers. Without this guard, a
     // single unreadable directory (e.g. ~/.ignorekit with restrictive perms)
     // prevents listing ANY definitions from ANY layer.
-    debugError(err, 'fs.listDefinitions');
+    debugError(err, 'fs.listDefinitions', env);
     return [];
   }
 }

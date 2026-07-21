@@ -125,7 +125,7 @@ function createDefinitionResolver(options = {}) {
   function listDefinitionIds(kind, extension) {
     const ids = new Set();
     for (const root of layers) {
-      for (const id of listDefinitions(path.join(root, kind), extension)) {
+      for (const id of listDefinitions(path.join(root, kind), extension, resolverEnv)) {
         ids.add(id);
       }
     }

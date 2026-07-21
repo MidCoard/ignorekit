@@ -343,3 +343,4 @@ test('init confirm=y writes files', async () => {
     workspace.cleanup();
   }
 });
+

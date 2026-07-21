@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { assertDefinitionId, resolveInside, USER_ROOT } = require('../core/path');
 const { normalizeText, parseSignificantLines } = require('../core/text');
-const { analyzeGitignore } = require('./analyze');
+const { analyzeGitignore, tryAnalyzeGitignore } = require('./analyze');
 const { writeMatchedComponentsBlock } = require('./_format');
 const { extractStreams } = require('../core/env');
 
@@ -81,22 +81,20 @@ async function runComponentCreate(options, env) {
   // automatically — surface the error so the user can use --rule instead.
   if (options.from && rules.length === 0) {
     const sourcePath = path.resolve(cwd, options.from);
-    try {
-      analysis = analyzeGitignore({
-        gitignorePath: sourcePath,
-        distRoot: options.distRoot,
-        userRoot: options.userRoot,
-        workspaceRoot: options.workspaceRoot,
-        // The source .gitignore may be outside the project root (e.g. --from
-        // pointing to an arbitrary file). Signal detection must run against the
-        // actual project directory, not the directory containing the source file.
-        projectPath: cwd
-      }, { stderr });
-    } catch (err) {
-      stderr.write(`Could not analyze ${path.basename(sourcePath)}: ${err.message}\n`);
+    analysis = tryAnalyzeGitignore({
+      gitignorePath: sourcePath,
+      distRoot: options.distRoot,
+      userRoot: options.userRoot,
+      workspaceRoot: options.workspaceRoot,
+      // The source .gitignore may be outside the project root (e.g. --from
+      // pointing to an arbitrary file). Signal detection must run against the
+      // actual project directory, not the directory containing the source file.
+      projectPath: cwd
+    }, { stdout, stderr, cwd }, 'component.analyze');
+
+    if (analysis === null) {
       stderr.write('Use --rule to specify rules explicitly, or use a smaller source file.\n');
-      debugError(err, 'component.analyze', { stderr });
-      throw new Error(`Cannot analyze source file: ${err.message}`);
+      throw new Error(`Cannot analyze source file: ${path.basename(sourcePath)}`);
     }
 
     stdout.write(`Analyzing ${path.basename(sourcePath)} before extraction...\n\n`);

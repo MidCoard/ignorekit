@@ -38,7 +38,7 @@ const { extractStreams } = require('../core/env');
  * @returns {Promise<{ projectPath: string, configPath: string|null, git: object|null }>}
  */
 async function runInitWorkflow(options, env) {
-  const { stdout, cwd } = extractStreams(env);
+  const { stdout, stderr, cwd } = extractStreams(env);
   const projectPath = path.resolve(cwd, options.projectPath);
   fs.mkdirSync(projectPath, { recursive: true });
 
@@ -73,10 +73,24 @@ async function runInitWorkflow(options, env) {
   const resolver = buildResolver({ options, env, projectDirHint: projectPath });
   const gitignore = await generateGitignore({ config, resolver, env });
 
-  // Show preview in console before writing, matching the adopt workflow pattern.
-  stdout.write(`\n--- Preview (.gitignore) ---\n`);
-  stdout.write(gitignore);
-  stdout.write(`--- End preview ---\n\n`);
+  // Preview: ask instead of auto-showing. When --preview is passed, show the
+  // preview directly (the flag is the explicit answer). When the flag is NOT
+  // passed, ask interactively. In non-interactive mode (no env.ask), skip the
+  // preview entirely — CI doesn't need a preview unless explicitly requested.
+  if (options.preview) {
+    stdout.write(`\n--- Preview (.gitignore) ---\n`);
+    stdout.write(gitignore);
+    stdout.write(`--- End preview ---\n\n`);
+  } else if (env.ask) {
+    const showPreview = await env.ask('Show preview of generated .gitignore? [Y/n]: ');
+    if (!showPreview || showPreview.trim().toLowerCase() !== 'n') {
+      stdout.write(`\n--- Preview (.gitignore) ---\n`);
+      stdout.write(gitignore);
+      stdout.write(`--- End preview ---\n\n`);
+    } else {
+      stdout.write('Preview skipped.\n');
+    }
+  }
 
   // Confirm before writing (if env.confirm provided). The CLI dispatch routes
   // through buildCreateEnv so --yes skips the confirm, and non-interactive

@@ -7,16 +7,17 @@ const { DIST_ROOT } = require('./core/path');
 const { normalizeProjectConfig } = require('./config/project-config');
 const { resolvePresetChain } = require('./definitions/resolver');
 const { buildResolver, applyUserRootDefault } = require('./core/resolver-factory');
-const { createConfirm, isInteractive, runWithQuestions, readAllLines } = require('./cli/prompt');
+const { createAsk, createConfirm, isInteractive, runWithQuestions, readAllLines } = require('./cli/prompt');
 const { version: VERSION } = require('../package.json');
 const { generateGitignore } = require('./generator');
 const { runInitWorkflow } = require('./workflows/init');
 const { runAdoptWorkflow } = require('./workflows/adopt');
 const { runComponentCreate } = require('./workflows/component');
 const { runPresetCreate } = require('./workflows/preset');
+const { runComponentRemove, runPresetRemove } = require('./workflows/remove');
 const { promptComponentCreation, promptPresetCreation } = require('./interactive/create');
 const { runExplainWorkflow } = require('./workflows/explain');
-const { runAnalyzeWorkflow, analyzeGitignore } = require('./workflows/analyze');
+const { runAnalyzeWorkflow, analyzeGitignore, tryAnalyzeGitignore } = require('./workflows/analyze');
 const { debugError } = require('./core/debug');
 const { extractStreams } = require('./core/env');
 
@@ -25,7 +26,7 @@ const { extractStreams } = require('./core/env');
 const BOOLEAN_OPTIONS = new Set([
   'all', 'yes', 'git', 'noGit', 'dryRun', 'preview',
   'overwrite', 'overwriteConfig', 'removeCached',
-  'allowNestedGit', 'apply', 'verbose', 'suggestPreset'
+  'allowNestedGit', 'apply', 'verbose', 'suggestPreset', 'generate'
 ]);
 
 // Repeatable options accumulate into arrays instead of overwriting.
@@ -112,6 +113,7 @@ Commands:
   init        Initialize a new project with config and .gitignore
   adopt       Adopt an existing project into ignorekit
   create      Create a component or preset definition
+  remove      Remove a user-defined component or preset
 
 Options:
   --version   Print version and exit
@@ -153,13 +155,17 @@ Options:
   --user-root <path>     User-level override directory
   --workspace-root <path> Workspace-level definition directory
   --output <path>        Output file path (default: .gitignore next to config)
+  --preview              Skip the "Show preview?" question, show directly
+  --yes                  Skip all confirmation prompts (non-interactive / CI)
 
-The generate command is pure: it reads the config and produces a .gitignore
-without any Git side effects or addons.
+The generate command reads the config and produces a .gitignore.
+If --preview is not passed, generate asks whether to show the preview.
+Use --yes to skip all prompts in CI pipelines.
 
 Examples:
   ignorekit generate ./ignorekit.json
   ignorekit generate ./ignorekit.json --output ./generated.gitignore
+  ignorekit generate ./ignorekit.json --yes
 `,
     init: `ignorekit init - Initialize a new project
 
@@ -184,14 +190,16 @@ Options:
   --git                  Run git init in the project directory
   --no-git               Skip git init (default)
   --overwrite            Replace existing ignorekit.json and .gitignore
-  --yes                  Skip the confirmation prompt before writing
+  --preview              Skip the "Show preview?" question, show directly
+  --yes                  Skip all confirmation prompts (non-interactive / CI)
   --dist-root <path>     Root directory for shipped definitions
   --user-root <path>     User-level definition directory
   --workspace-root <path> Workspace-level definition directory
   --allow-nested-git     Allow initializing a nested Git repo
 
 Creates an ignorekit.json config and generates a .gitignore.
-A preview is shown before writing; use --yes to skip the prompt.
+If --preview is not passed, adopt asks whether to show the generated
+.gitignore preview. Use --yes to skip all prompts in CI pipelines.
 If --preset is omitted, an interactive picker will suggest presets
 based on any existing .gitignore in the project.
 
@@ -221,10 +229,12 @@ Options:
   !) and patterns matching common secret filenames; warnings are printed when
   found. Review external content before committing.
 
-  --apply                Write .gitignore and ignorekit.json (without this, preview only)
-  --overwrite-config     Overwrite an existing ignorekit.json
+  --apply                Accepted for backward compat (no longer required)
+  --overwrite-config     Skip the "Overwrite config?" question, overwrite directly
+  --preview              Skip the "Show preview?" question, show directly
+  --generate             Skip the "Generate .gitignore?" question, write directly
   --remove-cached        Remove Git-tracked files that should be ignored
-  --yes                  Skip confirmation prompts (use with --apply and/or --remove-cached)
+  --yes                  Skip all confirmation prompts (non-interactive / CI)
   --dist-root <path>     Root directory for shipped definitions
   --user-root <path>     User-level definition directory
   --workspace-root <path> Workspace-level definition directory
@@ -232,17 +242,18 @@ Options:
 If --preset is omitted, analyzes any existing .gitignore and suggests
 the best-matching preset interactively.
 
-Without --apply, adopt shows a preview of the generated .gitignore without
-writing any files. With --apply, it writes .gitignore and ignorekit.json.
-If a .gitignore already exists, a backup is saved as .gitignore.bak before
-overwriting. --remove-cached requires --apply as a safety guard.
+Interactive flow: analyze → pick preset → pick extras → confirm →
+(overwrite-config?) → (preview?) → (generate?) → write.
+
+Flags skip their corresponding question. Use --yes to skip all prompts.
+Without --generate or --yes, adopt asks before writing the .gitignore.
 
 Examples:
-  ignorekit adopt                           # interactive: analyze, pick preset, preview
-  ignorekit adopt --preset java-gradle      # preview only
-  ignorekit adopt --preset java-gradle --apply  # write files
-  ignorekit adopt ./project --preset vite --apply
-  ignorekit adopt --preset generic --apply --yes  # non-interactive / CI
+  ignorekit adopt                           # fully interactive
+  ignorekit adopt --preset java-gradle      # interactive with preset chosen
+  ignorekit adopt --preset java-gradle --generate  # write without asking
+  ignorekit adopt ./project --preset vite
+  ignorekit adopt --preset generic --yes    # non-interactive / CI
 `,
     create: `ignorekit create - Create reusable definitions
 
@@ -290,13 +301,35 @@ Examples:
   ignorekit create component docker --category deployment --rule docker-compose.override.yml
   ignorekit create preset team-vite --base vite --component local/runtime
 `,
+    remove: `ignorekit remove - Remove a user-defined component or preset
+
+Usage:
+  ignorekit remove component <id> [options]
+  ignorekit remove preset <id> [options]
+
+Arguments:
+  id         Definition ID (e.g. language/kotlin-canceled, my-preset)
+
+Options:
+  --output-root <path>    Definition root (default: ~/.ignorekit)
+  --user-root <path>      User-level override directory
+  --workspace-root <path> Workspace-level definition directory
+  --yes                   Skip the confirmation prompt
+
+  Only user-layer and workspace-layer definitions can be removed.
+  Shipped (dist-layer) definitions cannot be deleted.
+
+Examples:
+  ignorekit remove component language/kotlin-canceled
+  ignorekit remove preset my-old-preset --yes
+`,
     explain: `ignorekit explain - Explain what an ignorekit.json config produces
 
 Usage:
-  ignorekit explain <config> [options]
+  ignorekit explain [config] [options]
 
 Arguments:
-  config    Path to ignorekit.json
+  config    Path to ignorekit.json (default: ./ignorekit.json)
 
 Options:
   --verbose               Show full component content (not just summary)
@@ -308,16 +341,16 @@ Shows which components the preset brings, what each component contributes,
 and what custom rules are project-specific. Like MySQL EXPLAIN for gitignore.
 
 Examples:
-  ignorekit explain ./ignorekit.json
+  ignorekit explain
   ignorekit explain ./ignorekit.json --verbose
 `,
     analyze: `ignorekit analyze - Analyze a .gitignore against known components
 
 Usage:
-  ignorekit analyze <gitignore-path> [options]
+  ignorekit analyze [gitignore-path] [options]
 
 Arguments:
-  gitignore-path    Path to the .gitignore file to analyze
+  gitignore-path    Path to the .gitignore file to analyze (default: ./.gitignore)
 
 Options:
   --suggest-preset       Suggest the best-matching preset
@@ -329,7 +362,7 @@ Matches lines in the .gitignore against known components, identifies
 what is covered and what is custom, and optionally suggests a preset.
 
 Examples:
-  ignorekit analyze ./.gitignore
+  ignorekit analyze
   ignorekit analyze ./.gitignore --suggest-preset
 `
   };
@@ -349,7 +382,7 @@ Examples:
 function commandList(args, env) {
   const options = applyUserRootDefault(parseArgs(args));
   const target = options._[0] || 'all';
-  const { stdout, stderr } = extractStreams(env);
+  const { stdout, stderr, cwd } = extractStreams(env);
 
   const resolver = buildResolver({ options, env });
 
@@ -373,7 +406,7 @@ function commandList(args, env) {
           stdout.write(`  ${preset}\n`);
         }
       } catch (err) {
-        debugError(err, 'list.preset-chain', { stderr });
+        debugError(err, 'list.preset-chain', { stdout, stderr, cwd });
         stdout.write(`  ${preset}\n`);
       }
     }
@@ -392,12 +425,13 @@ function createResolverFromOptions(options, configPath, env) {
 }
 
 async function commandGenerate(args, env) {
+  const { stdout, stderr, cwd } = extractStreams(env);
   const options = applyUserRootDefault(parseArgs(args));
   const configPath = options._[0];
   if (!configPath) {
     throw new Error('generate requires a config path');
   }
-  const absoluteConfigPath = path.resolve(env.cwd || process.cwd(), configPath);
+  const absoluteConfigPath = path.resolve(cwd, configPath);
   const rawConfig = readJson(absoluteConfigPath);
   let config;
   try {
@@ -408,8 +442,40 @@ async function commandGenerate(args, env) {
   const resolver = createResolverFromOptions(options, absoluteConfigPath, env);
   const content = await generateGitignore({ config, resolver, env });
   const outputPath = path.resolve(path.dirname(absoluteConfigPath), options.output || '.gitignore');
+
+  // Preview: ask instead of auto-showing. When --preview is passed, show the
+  // preview directly (the flag is the explicit answer). When the flag is NOT
+  // passed, ask interactively. In non-interactive mode (no env.ask), skip the
+  // preview entirely — CI doesn't need a preview unless explicitly requested.
+  if (options.preview) {
+    stdout.write(`\n--- Preview (.gitignore) ---\n`);
+    stdout.write(content);
+    stdout.write(`--- End preview ---\n\n`);
+  } else if (env.ask) {
+    const showPreview = await env.ask('Show preview of generated .gitignore? [Y/n]: ');
+    if (!showPreview || showPreview.trim().toLowerCase() !== 'n') {
+      stdout.write(`\n--- Preview (.gitignore) ---\n`);
+      stdout.write(content);
+      stdout.write(`--- End preview ---\n\n`);
+    } else {
+      stdout.write('Preview skipped.\n');
+    }
+  }
+
+  // Confirm before writing (if env.confirm provided). The CLI dispatch routes
+  // through buildCreateEnv so --yes skips the confirm, and non-interactive
+  // environments (CI, piped stdin) get no confirm callback at all — matching
+  // the confirm-gate pattern used by init, adopt, and create.
+  if (env.confirm) {
+    const proceed = await env.confirm();
+    if (!proceed) {
+      stdout.write('Cancelled — no files written.\n');
+      return { exitCode: 1 };
+    }
+  }
+
   fs.writeFileSync(outputPath, content, 'utf8');
-  env.stdout.write(`Generated ${outputPath}\n`);
+  stdout.write(`Generated ${outputPath}\n`);
 }
 
 // --- Interactive preset picker ---
@@ -421,39 +487,34 @@ async function commandGenerate(args, env) {
  * 3. Return the chosen preset name, or null if cancelled
  */
 async function pickPresetInteractive(options, env) {
-  const stdout = env.stdout || process.stdout;
-  const stderr = env.stderr || process.stderr;
+  const { stdout, stderr, cwd } = extractStreams(env);
   const stdin = env.stdin || process.stdin;
   const distRoot = options.distRoot || DIST_ROOT;
 
   // Try to auto-detect from existing .gitignore
   let suggestion = null;
-  const projectPath = path.resolve(env.cwd || process.cwd(), options.projectPath || '.');
+  const projectPath = path.resolve(cwd, options.projectPath || '.');
   const gitignorePath = path.join(projectPath, '.gitignore');
 
   if (fs.existsSync(gitignorePath)) {
     stdout.write('\nFound .gitignore — analyzing for preset suggestions...\n\n');
-    try {
-      const analysis = analyzeGitignore({
-        gitignorePath,
-        distRoot,
-        userRoot: options.userRoot,
-        workspaceRoot: options.workspaceRoot,
-        projectPath
-      }, { stderr });
+    const analysis = tryAnalyzeGitignore({
+      gitignorePath,
+      distRoot,
+      userRoot: options.userRoot,
+      workspaceRoot: options.workspaceRoot,
+      projectPath
+    }, { stdout, stderr, cwd }, 'preset-picker.analyze');
 
-      if (analysis.bestPreset && analysis.bestPreset.score > 0) {
-        suggestion = analysis.bestPreset.id;
-        const matchInfo = `${analysis.bestPreset.fullCount} of ${analysis.bestPreset.componentCount} components matched`;
-        stdout.write(`💡 Best match: ${suggestion} (${matchInfo})\n\n`);
-      }
-    } catch (err) {
+    if (analysis && analysis.bestPreset && analysis.bestPreset.score > 0) {
+      suggestion = analysis.bestPreset.id;
+      const matchInfo = `${analysis.bestPreset.fullCount} of ${analysis.bestPreset.componentCount} components matched`;
+      stdout.write(`💡 Best match: ${suggestion} (${matchInfo})\n\n`);
+    } else if (analysis === null) {
       // Surface the failure rather than silently falling back. Most common
       // cause is a .gitignore > 1 MiB (refused by analyzeGitignore), which
       // otherwise looks like "no suggestion available" and confuses users.
-      stderr.write(`Could not analyze .gitignore: ${err.message}\n`);
       stderr.write(`Picking from the full preset list instead.\n`);
-      debugError(err, 'preset-picker.analyze', { stderr });
     }
   }
 
@@ -484,9 +545,13 @@ async function pickPresetInteractive(options, env) {
   }
 
   stdout.write('Available presets:\n');
-  for (let i = 0; i < presetIds.length; i++) {
-    const marker = presetIds[i] === suggestion ? ' ← suggested' : '';
-    stdout.write(`  ${i + 1}. ${presetIds[i]}${marker}\n`);
+  // Put the suggested preset at the top of the list so it's immediately visible
+  const sortedPresets = suggestion
+    ? [suggestion, ...presetIds.filter(p => p !== suggestion)]
+    : presetIds;
+  for (let i = 0; i < sortedPresets.length; i++) {
+    const marker = sortedPresets[i] === suggestion ? ' ← suggested' : '';
+    stdout.write(`  ${i + 1}. ${sortedPresets[i]}${marker}\n`);
   }
   stdout.write('\n');
 
@@ -500,7 +565,7 @@ async function pickPresetInteractive(options, env) {
   // Read user input. Route through runWithQuestions so prompt reading uses a
   // single readline lifecycle shared with the create flow.
   const answer = await runWithQuestions(
-    { stdin, stdout, ask: env.ask, stderr: env.stderr },
+    { stdin, stdout, ask: env.ask, stderr },
     ask => ask(`Pick a preset (name, number, or g/b) [${defaultLabel}]: `)
   );
 
@@ -532,7 +597,7 @@ async function pickPresetInteractive(options, env) {
   }
 
   const num = parseInt(v, 10);
-  if (Number.isInteger(num) && num >= 1 && num <= presetIds.length) return presetIds[num - 1];
+  if (Number.isInteger(num) && num >= 1 && num <= sortedPresets.length) return sortedPresets[num - 1];
 
   // Try matching by name (case-sensitive first, then case-insensitive)
   const trimmed = answer.trim();
@@ -547,19 +612,32 @@ async function pickPresetInteractive(options, env) {
 /**
  * Build the env passed to create workflows (component.js / preset.js).
  * Adds a confirm() callback that prompts the user unless --yes is set or
- * stdin is not a TTY (piped/test input).
+ * stdin is not a TTY (piped/test input). Also adds an ask() callback for
+ * workflow questions like "Overwrite config?" and "Show preview?".
+ *
+ * When skipConfirm (--yes) is true, both env.ask and env.confirm are
+ * omitted so the workflow skips all prompts — --yes means "no more prompts".
+ * The preset picker and component picker use buildPickerEnv instead and run
+ * before the workflow, so they are unaffected.
  */
 function buildCreateEnv(env, skipConfirm) {
   const { stdout, stderr, cwd } = extractStreams(env);
   const result = { stdout, stderr, cwd };
 
-  // Preserve ask and stdin so interactive flows (promptComponentCreation,
-  // promptPresetCreation) can use them directly from the env object. Without
-  // these, the create command's interactive path has no way to prompt the user.
-  if (env.ask) result.ask = env.ask;
   if (env.stdin) result.stdin = env.stdin;
 
   if (skipConfirm) return result;
+
+  // When env.ask is provided by tests, pass it through so test-driven prompts
+  // work. When env.ask is absent, create an ask function from readline for
+  // the workflow's interactive questions (overwrite-config, preview).
+  if (env.ask) {
+    result.ask = env.ask;
+  } else {
+    const ask = createAsk(env);
+    if (ask) result.ask = ask;
+  }
+
   if (env.confirm) { result.confirm = env.confirm; return result; }
 
   const confirm = createConfirm(env);
@@ -585,8 +663,7 @@ function buildPickerEnv(env) {
 // option validation) becomes repetitive.
 
 async function runCli(args, env = {}) {
-  const stdout = env.stdout || process.stdout;
-  const stderr = env.stderr || process.stderr;
+  const { stdout, stderr, cwd } = extractStreams(env);
   const command = args[0] || 'help';
 
   try {
@@ -609,41 +686,42 @@ async function runCli(args, env = {}) {
 
     // List
     if (command === 'list') {
-      commandList(args.slice(1), { stdout, stderr, cwd: env.cwd });
+      commandList(args.slice(1), { stdout, stderr, cwd });
       return { exitCode: 0 };
     }
 
     // Generate
     if (command === 'generate') {
-      await commandGenerate(args.slice(1), { stdout, stderr, cwd: env.cwd });
-      return { exitCode: 0 };
+      const options = applyUserRootDefault(parseArgs(args.slice(1)));
+      // Route through buildCreateEnv so --yes (and TTY/CI detection) honor the
+      // same rules as init, adopt, and create. The generate command now has a
+      // preview + confirm gate matching the other write-to-disk commands.
+      const generateEnv = buildCreateEnv({ stdout, stderr, cwd, stdin: env.stdin, ask: env.ask }, options.yes);
+      const result = await commandGenerate(args.slice(1), generateEnv);
+      // commandGenerate returns { exitCode: 1 } when the user declines the
+      // confirm prompt; undefined/void when it succeeds.
+      return { exitCode: result && result.exitCode ? result.exitCode : 0 };
     }
 
     // Explain
     if (command === 'explain') {
       const options = applyUserRootDefault(parseArgs(args.slice(1)));
-      options.configPath = options._[0];
-      if (!options.configPath) {
-        throw new Error('explain requires a config path');
-      }
-      runExplainWorkflow(options, { stdout, stderr, cwd: env.cwd });
+      options.configPath = options._[0] || 'ignorekit.json';
+      runExplainWorkflow(options, { stdout, stderr, cwd });
       return { exitCode: 0 };
     }
 
     // Analyze
     if (command === 'analyze') {
       const options = applyUserRootDefault(parseArgs(args.slice(1)));
-      options.gitignorePath = options._[0];
-      if (!options.gitignorePath) {
-        throw new Error('analyze requires a .gitignore path');
-      }
+      options.gitignorePath = options._[0] || '.gitignore';
       // The cwd is the project root for signal detection. When the .gitignore
       // is in a subdirectory, signal detection must still scan the project root
       // (where package.json, build.gradle, etc. live), not the subdirectory.
       if (!options.projectPath) {
-        options.projectPath = env.cwd || process.cwd();
+        options.projectPath = cwd;
       }
-      runAnalyzeWorkflow(options, { stdout, stderr, cwd: env.cwd });
+      runAnalyzeWorkflow(options, { stdout, stderr, cwd });
       return { exitCode: 0 };
     }
 
@@ -668,7 +746,7 @@ async function runCli(args, env = {}) {
       // Route through buildCreateEnv so --yes (and TTY/CI detection) honor the
       // same rules as `adopt` and `create`. Previously `init --yes` was parsed
       // but ignored because init had no confirm gate at all.
-      const initEnv = buildCreateEnv({ stdout, stderr, cwd: env.cwd, stdin: env.stdin, ask: env.ask }, options.yes);
+      const initEnv = buildCreateEnv({ stdout, stderr, cwd, stdin: env.stdin, ask: env.ask }, options.yes);
       const result = await runInitWorkflow(options, initEnv);
       if (result.configPath === null) {
         // User declined the confirm — no files written.
@@ -698,15 +776,13 @@ async function runCli(args, env = {}) {
       // Route through buildCreateEnv so --yes (and TTY/CI detection) honor the
       // same rules as `create`. Previously `adopt --yes` still prompted because
       // the inline createConfirm here didn't see the --yes flag.
-      const adoptEnv = buildCreateEnv({ stdout, stderr, cwd: env.cwd, stdin: env.stdin, ask: env.ask }, options.yes);
+      const adoptEnv = buildCreateEnv({ stdout, stderr, cwd, stdin: env.stdin, ask: env.ask }, options.yes);
       const result = await runAdoptWorkflow(options, adoptEnv);
-      if (result.configPath === null && !result.preview) {
-        // user cancelled
+      if (result.configPath === null) {
+        // user cancelled or declined overwrite
         return { exitCode: 1 };
       }
-      if (result.configPath) {
-        stdout.write(`Adopted ignorekit project at ${result.projectPath}\n`);
-      }
+      stdout.write(`Adopted ignorekit project at ${result.projectPath}\n`);
       return { exitCode: 0 };
     }
 
@@ -718,7 +794,7 @@ async function runCli(args, env = {}) {
       // as init and adopt, so the create command gets a consistent env shape
       // (stdout, stderr, cwd, stdin, ask) rather than the raw env object which
       // may carry extra properties or miss expected ones.
-      const createEnv = buildCreateEnv({ stdout, stderr, cwd: env.cwd, stdin: env.stdin, ask: env.ask }, options.yes);
+      const createEnv = buildCreateEnv({ stdout, stderr, cwd, stdin: env.stdin, ask: env.ask }, options.yes);
       if (subcommand === 'component') {
         options.name = options._[0];
         options.rules = options.rules || [];
@@ -755,7 +831,7 @@ async function runCli(args, env = {}) {
           // shape throughout. The ask callback from runWithQuestions overrides
           // createEnv.ask so that readline-driven prompts work correctly with
           // both env.ask and piped stdin.
-          const interactiveEnv = { stdin: env.stdin, stdout, stderr, cwd: env.cwd, ask: env.ask };
+          const interactiveEnv = { stdin: env.stdin, stdout, stderr, cwd, ask: env.ask };
           const draft = await runWithQuestions(interactiveEnv, ask => promptComponentCreation(options, { ...createEnv, ask }));
           if (!draft) return { exitCode: 1 };
           options = { ...options, ...draft };
@@ -767,7 +843,7 @@ async function runCli(args, env = {}) {
         options.name = options._[0];
         options.components = options.components || [];
         if (!options.name) {
-          const interactiveEnv = { stdin: env.stdin, stdout, stderr, cwd: env.cwd, ask: env.ask };
+          const interactiveEnv = { stdin: env.stdin, stdout, stderr, cwd, ask: env.ask };
           const draft = await runWithQuestions(interactiveEnv, ask => promptPresetCreation(options, { ...createEnv, ask }));
           if (!draft) return { exitCode: 1 };
           options = { ...options, ...draft };
@@ -776,6 +852,26 @@ async function runCli(args, env = {}) {
         return { exitCode: result.outputPath ? 0 : 1 };
       }
       throw new Error('create supports: component, preset');
+    }
+
+    // Remove
+    if (command === 'remove') {
+      const subcommand = args[1];
+      const options = applyUserRootDefault(parseArgs(args.slice(2)));
+      const removeEnv = buildCreateEnv({ stdout, stderr, cwd, stdin: env.stdin, ask: env.ask }, options.yes);
+      if (subcommand === 'component') {
+        options.id = options._[0];
+        if (!options.id) throw new Error('Component ID is required (e.g. language/kotlin-canceled)');
+        const result = await runComponentRemove(options, removeEnv);
+        return { exitCode: result.removed ? 0 : 1 };
+      }
+      if (subcommand === 'preset') {
+        options.id = options._[0];
+        if (!options.id) throw new Error('Preset ID is required (e.g. my-custom-preset)');
+        const result = await runPresetRemove(options, removeEnv);
+        return { exitCode: result.removed ? 0 : 1 };
+      }
+      throw new Error('remove supports: component, preset');
     }
 
     throw new Error(`Unknown command: ${command}`);

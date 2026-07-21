@@ -8,7 +8,7 @@ A cross-platform CLI tool for building `.gitignore` files from composable compon
 npm install -g ignorekit
 
 ignorekit init ./my-project --preset node --git   # new project
-ignorekit adopt --preset vite --apply              # existing project
+ignorekit adopt --preset vite              # existing project
 ignorekit generate ./ignorekit.json                # rebuild .gitignore
 ```
 
@@ -84,18 +84,21 @@ from analysis, pressing Enter selects `generic`.
 ### `adopt` — Bring an existing project into ignorekit
 
 ```bash
-ignorekit adopt                                   # interactive: analyze, pick preset
-ignorekit adopt --preset java-gradle              # use current directory
+ignorekit adopt                                   # fully interactive
+ignorekit adopt --preset java-gradle              # interactive with preset chosen
 ignorekit adopt --preset node --exclude platform/windows
 ignorekit adopt --preset java-gradle --component language/node  # mixed project
-ignorekit adopt --preset java-gradle --remove-cached --apply  # also untrack ignored files
+ignorekit adopt --preset java-gradle --generate   # write without asking
+ignorekit adopt --preset generic --yes            # non-interactive / CI
 ```
 
-Adopt analyzes your existing `.gitignore`, shows strong component matches, carries over only rules not covered by your chosen preset or extra components, and **writes directly to `.gitignore`**. A preview of the result is shown in the console before any files are written.
+Adopt analyzes your existing `.gitignore`, shows strong component matches, carries over only rules not covered by your chosen preset or extra components, and writes `.gitignore` and `ignorekit.json` after you confirm.
 
-If a `.gitignore` already exists, a backup is saved as `.gitignore.bak` before overwriting. Use repeatable `--component <id>` options for mixed projects; the selected components are saved in `ignorekit.json`.
+**Interactive flow:** analyze → pick preset → see components → pick extras → confirm → (overwrite-config?) → (preview?) → (generate?) → write.
 
-`--remove-cached` requires `--apply` as a safety guard (it deletes files from the Git index, so you must confirm).
+**Flags skip questions:** `--overwrite-config` skips "Overwrite config?", `--preview` skips "Show preview?" and shows the preview directly, `--generate` skips "Generate .gitignore?" and writes directly, `--yes` skips all prompts for CI pipelines.
+
+Use repeatable `--component <id>` options for mixed projects; the selected components are saved in `ignorekit.json`.
 
 ### `generate` — Build .gitignore from config
 

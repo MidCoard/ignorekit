@@ -288,6 +288,8 @@ test('pickPresetInteractive does not silently default to alphabet[0] when no sug
       { distRoot: workspace.path('dist') },
       {
         stdout: { write: () => {} },
+        stderr: { write: () => {} },
+        cwd: process.cwd(),
         stdin: { isTTY: true },
         ask: async () => ''
       }
@@ -311,6 +313,8 @@ test('pickPresetInteractive returns null when no default exists and user enters 
       { distRoot: workspace.path('dist') },
       {
         stdout: { write: () => {} },
+        stderr: { write: () => {} },
+        cwd: process.cwd(),
         stdin: { isTTY: true },
         ask: async () => ''
       }
@@ -759,6 +763,8 @@ test('pickPresetInteractive omits "b. blank" when blank preset is absent', async
       { distRoot: workspace.path('dist') },
       {
         stdout: { write: text => writes.push(String(text)) },
+        stderr: { write: () => {} },
+        cwd: process.cwd(),
         stdin: { isTTY: true },
         ask: async () => ''
       }
@@ -783,6 +789,8 @@ test('pickPresetInteractive omits "g. generic" when generic preset is absent', a
       { distRoot: workspace.path('dist') },
       {
         stdout: { write: text => writes.push(String(text)) },
+        stderr: { write: () => {} },
+        cwd: process.cwd(),
         stdin: { isTTY: true },
         ask: async () => ''
       }
@@ -805,6 +813,8 @@ test('pickPresetInteractive rejects "b" shortcut when blank preset is absent', a
       { distRoot: workspace.path('dist') },
       {
         stdout: { write: text => writes.push(String(text)) },
+        stderr: { write: () => {} },
+        cwd: process.cwd(),
         stdin: { isTTY: true },
         ask: async () => 'b'
       }
@@ -865,6 +875,8 @@ test('pickPresetInteractive returns safeDefault when answer is null and generic 
       { distRoot: workspace.path('dist') },
       {
         stdout: { write: () => {} },
+        stderr: { write: () => {} },
+        cwd: process.cwd(),
         stdin: { isTTY: true },
         ask: async () => null  // non-interactive: null answer
       }
@@ -890,6 +902,8 @@ test('pickPresetInteractive returns suggestion when answer is null and no generi
       { distRoot: workspace.path('dist'), projectPath: '.' },
       {
         stdout: { write: () => {} },
+        stderr: { write: () => {} },
+        cwd: process.cwd(),
         stdin: { isTTY: true },
         ask: async () => null
       }
@@ -931,7 +945,9 @@ test('init without --preset passes env.ask through to pickPresetInteractive', as
     // ask function drives the picker and returns 'alpha' (exit 0).
     workspace.writeJson('dist/presets/alpha.json', { name: 'alpha', components: [] });
 
-    let askCalledWith = null;
+    let pickerPromptSeen = false;
+    const answers = ['alpha', 'n']; // preset picker, then "Show preview?" → no
+    let answerIndex = 0;
     const result = await runCli([
       'init', workspace.path('project'),
       '--no-git',
@@ -942,15 +958,14 @@ test('init without --preset passes env.ask through to pickPresetInteractive', as
       stderr: { write: () => {} },
       cwd: workspace.root,
       ask: async (prompt) => {
-        askCalledWith = prompt;
-        return 'alpha';
+        if (prompt.includes('Pick a preset')) pickerPromptSeen = true;
+        return answers[answerIndex++];
       }
     });
 
     // If env.ask was correctly passed through, the picker uses it and returns
     // 'alpha'. Without the fix, ask is never called and the picker returns null.
-    assert.ok(askCalledWith !== null, 'env.ask should have been called by pickPresetInteractive');
-    assert.match(askCalledWith, /Pick a preset/);
+    assert.ok(pickerPromptSeen, 'env.ask should have been called by pickPresetInteractive');
     assert.equal(result.exitCode, 0, 'init should succeed when ask drives the picker');
   } finally {
     workspace.cleanup();
@@ -965,9 +980,9 @@ test('adopt without --preset passes env.ask through to pickPresetInteractive', a
     fs.mkdirSync(workspace.path('project'));
 
     let pickerAskCalled = false;
-    // The adopt flow asks two questions: the preset picker and then the confirm.
-    // Return 'alpha' for the picker, 'y' for the confirm.
-    const answers = ['alpha', 'y'];
+    // The adopt flow asks: preset picker, "Show preview?", then confirm.
+    // Return 'alpha' for the picker, 'y' for preview, 'y' for the confirm.
+    const answers = ['alpha', 'y', 'y'];
     const result = await runCli([
       'adopt', workspace.path('project'),
       '--dist-root', workspace.path('dist'),
@@ -1043,7 +1058,7 @@ test('adopt without --preset passes env.cwd to pickPresetInteractive for .gitign
     workspace.writeText('project/.gitignore', 'logs/\n');
 
     const output = [];
-    const answers = ['demo', 'y'];
+    const answers = ['demo', 'y', 'y'];
     const result = await runCli([
       'adopt', 'project',
       '--dist-root', workspace.path('dist'),
@@ -1301,6 +1316,8 @@ test('pickPresetInteractive matches preset names case-insensitively', async () =
       { distRoot: workspace.path('dist'), projectPath: '.' },
       {
         stdout: { write: () => {} },
+        stderr: { write: () => {} },
+        cwd: process.cwd(),
         stdin: { isTTY: true },
         ask: async () => 'VITE'
       }

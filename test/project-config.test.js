@@ -247,6 +247,49 @@ test('fetchGitignoreIoTemplates (internal) rejects on timeout', async () => {
   }
 });
 
+// --- #6 (P1): HTTPS request must enforce certificate validation ---
+
+test('fetchGitignoreIoTemplates (internal) passes rejectUnauthorized: true to https.get', async () => {
+  // When NODE_TLS_REJECT_UNAUTHORIZED=0 is set (e.g. by a misconfigured CI
+  // environment), Node.js silently accepts invalid certificates. The fix
+  // explicitly sets rejectUnauthorized: true in the https.get options so that
+  // certificate validation is enforced regardless of the env var.
+  const EventEmitter = require('events');
+  const https = require('https');
+  const origGet = https.get;
+
+  let capturedOptions = null;
+  https.get = function mockGet(url, options, callback) {
+    // https.get signature: (url, options, callback) or (url, callback)
+    // The second arg is the options object when it's a plain object.
+    capturedOptions = (typeof options === 'object' && !Array.isArray(options)) ? options : {};
+    const req = new EventEmitter();
+    req.destroy = () => {};
+    const response = new EventEmitter();
+    response.headers = {};
+    response.statusCode = 200;
+    response.setEncoding = () => {};
+    process.nextTick(() => {
+      callback(response);
+      process.nextTick(() => response.emit('end'));
+    });
+    return req;
+  };
+
+  try {
+    delete require.cache[require.resolve('../src/providers/gitignore-io')];
+    const fresh = require('../src/providers/gitignore-io');
+
+    await fresh.buildGitignoreIoProviderText({ name: 'gitignore.io', templates: ['Node'] });
+    assert.ok(capturedOptions, 'https.get should have been called with options');
+    assert.equal(capturedOptions.rejectUnauthorized, true,
+      'https.get must pass rejectUnauthorized: true to enforce certificate validation');
+  } finally {
+    https.get = origGet;
+    delete require.cache[require.resolve('../src/providers/gitignore-io')];
+  }
+});
+
 // --- #8: Content-Length and per-chunk size guard ---
 
 test('fetchGitignoreIoTemplates (internal) rejects oversized Content-Length before consuming the body', async () => {
@@ -1011,5 +1054,50 @@ test('validateGitignoreIoUrl returns null for valid https URL without credential
   } finally {
     if (origEnv === undefined) delete process.env.IGNOREKIT_GITIGNORE_IO_URL;
     else process.env.IGNOREKIT_GITIGNORE_IO_URL = origEnv;
+  }
+});
+
+// --- Security warnings must appear even without options.stderr ---
+
+test('buildGitignoreIoProviderText writes negation warning to process.stderr when options.stderr is absent', async () => {
+  // Security warnings for gitignore.io content must be unconditional — they
+  // protect against compromised endpoints injecting negation patterns that
+  // re-include ignored files. When options.stderr is not provided (e.g. a
+  // caller that doesn't pass the full env), the warning must still appear on
+  // process.stderr rather than being silently suppressed.
+  const { buildGitignoreIoProviderText } = require('../src/providers/gitignore-io');
+  const chunks = [];
+  const origWrite = process.stderr.write;
+  process.stderr.write = (chunk) => { chunks.push(String(chunk)); return true; };
+  try {
+    // No options.stderr — the warning must still be written
+    await buildGitignoreIoProviderText(
+      { name: 'gitignore.io', templates: ['Node'] },
+      { fetchText: async () => 'node_modules/\n!secret.key\n' }
+    );
+    const output = chunks.join('');
+    assert.match(output, /negation pattern/, 'negation warning must appear on process.stderr when options.stderr is absent');
+  } finally {
+    process.stderr.write = origWrite;
+  }
+});
+
+test('buildGitignoreIoProviderText writes secret-like warning to process.stderr when options.stderr is absent', async () => {
+  // Same as above but for the secret-like filenames warning. Both warnings
+  // are security-relevant and must never be silently suppressed.
+  const { buildGitignoreIoProviderText } = require('../src/providers/gitignore-io');
+  const chunks = [];
+  const origWrite = process.stderr.write;
+  process.stderr.write = (chunk) => { chunks.push(String(chunk)); return true; };
+  try {
+    // No options.stderr — the warning must still be written
+    await buildGitignoreIoProviderText(
+      { name: 'gitignore.io', templates: ['Node'] },
+      { fetchText: async () => 'node_modules/\n.env\n' }
+    );
+    const output = chunks.join('');
+    assert.match(output, /secret filenames/, 'secret-like warning must appear on process.stderr when options.stderr is absent');
+  } finally {
+    process.stderr.write = origWrite;
   }
 });

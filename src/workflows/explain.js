@@ -8,6 +8,7 @@ const { buildResolver } = require('../core/resolver-factory');
 const { parseSignificantLines } = require('../core/text');
 const { debugError } = require('../core/debug');
 const { extractStreams } = require('../core/env');
+const { ID_PAD } = require('./_format');
 
 /**
  * Format a brief summary of component content for the table.
@@ -37,33 +38,34 @@ function summarizeLines(lines) {
  * @param {string} componentId - Component ID to display
  * @param {object} resolver - Definition resolver
  * @param {object} options - { verbose }
- * @param {object} streams - { stdout, stderr }
+ * @param {object} env - Full environment { stdout, stderr, cwd } for stream routing
+ *   and debug capture. Uses the same env contract as the rest of the codebase so
+ *   debugError can route to env.stderr consistently.
  * @param {Set<string>} resolvedComponents - Set to add successfully resolved IDs to
  * @returns {boolean}
  */
-function printComponentDetail(componentId, resolver, options, streams, resolvedComponents) {
+function printComponentDetail(componentId, resolver, options, env, resolvedComponents) {
   let content;
   try {
     content = resolver.readComponent(componentId);
   } catch (err) {
-    debugError(err, 'explain.readComponent', streams);
-    streams.stderr.write(`Warning: could not read component "${componentId}" — skipping. Set IGNOREKIT_DEBUG=1 for details.\n`);
+    debugError(err, 'explain.readComponent', env);
+    env.stderr.write(`Warning: could not read component "${componentId}" — skipping. Set IGNOREKIT_DEBUG=1 for details.\n`);
     return false;
   }
   resolvedComponents.add(componentId);
   const lines = parseSignificantLines(content);
   const ruleCount = lines.length;
   const summary = summarizeLines(lines);
-  const pad = 24;
-  const idPadded = componentId.padEnd(pad);
+  const idPadded = componentId.padEnd(ID_PAD);
   const countLabel = `${ruleCount} rule${ruleCount !== 1 ? 's' : ''}`;
-  streams.stdout.write(`  ${idPadded} ${countLabel.padEnd(10)} ${summary}\n`);
+  env.stdout.write(`  ${idPadded} ${countLabel.padEnd(10)} ${summary}\n`);
 
   if (options.verbose) {
     for (const line of content.split('\n')) {
-      streams.stdout.write(`    ${line}\n`);
+      env.stdout.write(`    ${line}\n`);
     }
-    streams.stdout.write('\n');
+    env.stdout.write('\n');
   }
   return true;
 }
@@ -158,7 +160,7 @@ function runExplainWorkflow(options, env) {
       const label = presetId === config.preset ? `From "${presetId}":` : `From ${presetId}:`;
       stdout.write(`${label}\n`);
       for (const componentId of newIds) {
-        printComponentDetail(componentId, resolver, options, { stdout, stderr }, resolvedComponents);
+        printComponentDetail(componentId, resolver, options, { stdout, stderr, cwd }, resolvedComponents);
       }
       stdout.write('\n');
     }
@@ -177,7 +179,7 @@ function runExplainWorkflow(options, env) {
   if (extraComponents.length > 0) {
     stdout.write('Extra components:\n');
     for (const componentId of extraComponents) {
-      printComponentDetail(componentId, resolver, options, { stdout, stderr }, resolvedComponents);
+      printComponentDetail(componentId, resolver, options, { stdout, stderr, cwd }, resolvedComponents);
     }
     stdout.write('\n');
   } else if (filteredPresetComponents.length > 0) {

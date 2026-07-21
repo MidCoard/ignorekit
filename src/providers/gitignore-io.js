@@ -166,7 +166,7 @@ function fetchGitignoreIoTemplates(templates, baseUrl = DEFAULT_GITIGNORE_IO_URL
       settled = true;
       reject(err);
     }
-    const req = https.get(url, { timeout: 10000 }, (response) => {
+    const req = https.get(url, { timeout: 10000, rejectUnauthorized: true }, (response) => {
       // Reject early based on Content-Length when the server advertises it,
       // before allocating any body buffer. This avoids paying for the first
       // oversized chunk before discovering the body is too large.
@@ -231,8 +231,14 @@ async function buildGitignoreIoProviderText(provider, options = {}) {
     text = await fetchGitignoreIoTemplates(provider.templates, baseUrl);
   }
   const negations = detectNegationPatterns(text);
-  if (negations.length > 0 && options.stderr) {
-    options.stderr.write(
+  if (negations.length > 0) {
+    // Security warnings for external content must be unconditional — a
+    // compromised endpoint could inject negation patterns that re-include
+    // files the user intended to ignore. Suppressing the warning when
+    // options.stderr is absent (e.g. a caller that doesn't pass the full
+    // env) would silently drop a security signal. Fall back to process.stderr
+    // so the warning always reaches the user.
+    (options.stderr || process.stderr).write(
       `[ignorekit] Warning: gitignore.io response contains ${negations.length} negation pattern(s) ` +
       `(${negations.slice(0, 3).join(', ')}${negations.length > 3 ? ', ...' : ''}). ` +
       `Negation patterns (lines starting with !) can re-include files that other rules ignore. ` +
@@ -240,8 +246,12 @@ async function buildGitignoreIoProviderText(provider, options = {}) {
     );
   }
   const secretLike = detectSecretLikePatterns(text);
-  if (secretLike.length > 0 && options.stderr) {
-    options.stderr.write(
+  if (secretLike.length > 0) {
+    // Same rationale as the negation warning above: secret-like filename
+    // patterns in external content are security-relevant and must never be
+    // silently suppressed. Fall back to process.stderr when the caller
+    // doesn't provide a stderr stream.
+    (options.stderr || process.stderr).write(
       `[ignorekit] Warning: gitignore.io response contains patterns matching ` +
       `common secret filenames (${secretLike.slice(0, 3).join(', ')}${secretLike.length > 3 ? ', ...' : ''}). ` +
       `Review the generated .gitignore before committing.\n`

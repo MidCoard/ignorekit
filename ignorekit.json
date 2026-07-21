@@ -2,10 +2,17 @@
   "version": 1,
   "name": "ignorekit",
   "preset": "node",
-  "components": ["local/ai-codegraph"],
+  "provider": {
+    "name": "local"
+  },
+  "components": [
+    "local/ai-claude",
+    "local/ai-codegraph"
+  ],
+  "exclude": [],
   "custom": [
-    ".worktrees/",
     "docs/",
     "examples/"
-  ]
+  ],
+  "addons": {}
 }

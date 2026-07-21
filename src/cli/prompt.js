@@ -2,7 +2,7 @@
 
 const readline = require('readline');
 
-const DEFAULT_PROMPT = 'Proceed? [y/N/cancel] (N): ';
+const DEFAULT_PROMPT = 'Proceed? [Y/n] ';
 
 /**
  * Decide whether the current invocation can interact with the user.
@@ -32,18 +32,18 @@ function isInteractive(env = {}, envStdin) {
 /**
  * Interpret a confirmation answer.
  *
- * Only an explicit yes proceeds; empty input, an explicit no, and cancel all
- * decline. Cancel is treated the same as no here — callers that need to
- * distinguish a deliberate cancel from a plain decline handle it separately.
+ * With the default [Y/n] prompt, empty input (just pressing Enter) proceeds
+ * as yes — the user has already made all choices and is confirming them.
+ * An explicit 'n' or 'no' declines.
  *
  * @param {string} answer
  * @returns {boolean}
  */
 function interpretConfirm(answer) {
   const v = String(answer == null ? '' : answer).trim().toLowerCase();
-  if (v === 'y' || v === 'yes') return true;
-  // empty, n/no, c/cancel → decline
-  return false;
+  if (v === 'n' || v === 'no') return false;
+  // empty, y/yes, or anything else → proceed (default is Y)
+  return true;
 }
 
 /**
@@ -90,7 +90,41 @@ function createConfirm(env, { prompt = DEFAULT_PROMPT } = {}) {
   });
 }
 
-module.exports = { createConfirm, interpretConfirm, isInteractive, runWithQuestions, readAllLines, DEFAULT_PROMPT };
+/**
+ * Build an ask() callback for a workflow env, or return null when no prompt
+ * should be shown (non-interactive input). Works like createConfirm but returns
+ * the raw string answer instead of interpreting it as a boolean.
+ *
+ * This is used by workflows that need to ask yes/no questions beyond the main
+ * confirm gate (e.g. "Overwrite config?", "Show preview?"). The ask function
+ * lets the workflow interpret the answer in its own context.
+ *
+ * @param {object} env - { stdout, stdin, ask }
+ * @param {object} [opts]
+ * @param {string} [opts.prompt] - Default prompt text (can be overridden per-call)
+ * @returns {((prompt?: string) => Promise<string>)|null}
+ */
+function createAsk(env) {
+  const stdout = env.stdout || process.stdout;
+  const stdin = env.stdin || process.stdin;
+
+  // env.ask short-circuits BEFORE isInteractive() — same as createConfirm.
+  if (env.ask) {
+    return (prompt) => Promise.resolve(env.ask(prompt));
+  }
+
+  if (!isInteractive(env, stdin)) return null;
+
+  return (prompt) => new Promise((resolve) => {
+    const rl = readline.createInterface({ input: stdin, output: stdout });
+    rl.question(prompt, (answer) => {
+      rl.close();
+      resolve(answer);
+    });
+  });
+}
+
+module.exports = { createAsk, createConfirm, interpretConfirm, isInteractive, runWithQuestions, readAllLines, DEFAULT_PROMPT };
 
 /**
  * Drive an interactive question/answer flow.

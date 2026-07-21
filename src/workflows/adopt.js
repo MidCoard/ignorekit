@@ -9,11 +9,12 @@ const { resolvePresetComponents } = require('../definitions/resolver');
 const { buildResolver } = require('../core/resolver-factory');
 const { generateGitignore } = require('../generator');
 const { listTrackedIgnoredFiles, removeCachedFiles } = require('../git');
-const { analyzeGitignore } = require('./analyze');
+const { analyzeGitignore, tryAnalyzeGitignore } = require('./analyze');
 const { normalizePattern, parseSignificantLines } = require('../core/text');
 const { writeMatchedComponentsBlock } = require('./_format');
 const { debugError } = require('../core/debug');
 const { extractStreams } = require('../core/env');
+const { pickExtraComponents } = require('../interactive/create');
 
 /**
  * Run the adopt workflow.
@@ -25,8 +26,10 @@ const { extractStreams } = require('../core/env');
  * @param {object} options
  * @param {string} options.projectPath - Path to the existing project directory
  * @param {string} options.preset - Preset name
- * @param {boolean} [options.apply] - Overwrite .gitignore directly
- * @param {boolean} [options.overwriteConfig] - Overwrite existing ignorekit.json
+ * @param {boolean} [options.apply] - Accepted for backward compat; no longer gates the write
+ * @param {boolean} [options.overwriteConfig] - Skip the "overwrite config?" question
+ * @param {boolean} [options.preview] - Skip the "show preview?" question, show directly
+ * @param {boolean} [options.generate] - Skip the "generate .gitignore?" question, write directly
  * @param {boolean} [options.removeCached] - Remove Git-tracked files that should be ignored
  * @param {boolean} [options.yes] - Confirm removal without prompt
  * @param {string} [options.distRoot] - Override dist root
@@ -43,26 +46,12 @@ async function runAdoptWorkflow(options, env) {
   if (!fs.existsSync(projectPath)) {
     throw new Error(`Project path does not exist: ${projectPath}. Use 'ignorekit init' to create a new project.`);
   }
-  if (options.removeCached && !options.apply) {
-    throw new Error('--remove-cached requires --apply (which writes .gitignore and ignorekit.json) so cached file removal uses the generated .gitignore');
-  }
+  // --apply is accepted for backward compatibility but no longer gates the
+  // write — adopt always writes after the user confirms. The flag is kept in
+  // BOOLEAN_OPTIONS so existing scripts don't break.
 
   const distRoot = options.distRoot || DIST_ROOT;
   const warnings = [];
-
-  // Overwrite-guard fires BEFORE any analysis or preview. A user who already
-  // has an ignorekit.json on disk should learn "config exists" first; running
-  // the analysis (which reads + matches their .gitignore, then prints "Rules
-  // needing review" and "Preset will add N components") only to throw on a
-  // config check at the end is wasted work and produces misleading output.
-  // Adopt uses --overwrite-config (not --overwrite) because the .gitignore
-  // overwrite is gated by --apply separately — the two overwrite decisions
-  // must be independent. Init uses --overwrite for both because it creates
-  // both files from scratch. Renaming either flag would be a breaking change.
-  const configPath = path.join(projectPath, 'ignorekit.json');
-  if (fs.existsSync(configPath) && !options.overwriteConfig) {
-    throw new Error(`Config already exists: ${configPath}. Use --overwrite-config to replace.`);
-  }
 
   // Create resolver once — reused throughout
   const resolver = buildResolver({ options, env, projectDirHint: projectPath });
@@ -83,29 +72,27 @@ async function runAdoptWorkflow(options, env) {
   let analysis = null;
   const existingGitignorePath = path.join(projectPath, '.gitignore');
   if (fs.existsSync(existingGitignorePath)) {
-    try {
-      analysis = analyzeGitignore({
-        gitignorePath: existingGitignorePath,
-        distRoot,
-        userRoot: options.userRoot,
-        workspaceRoot: options.workspaceRoot,
-        projectPath,
-        // Ask analyzeGitignore to preserve the source byte text of each rule so
-        // custom-rule carry-forward below keeps the user's original line exactly
-        // (including trailing whitespace and quoting).
-        keepRawLines: true
-      }, { stderr: env.stderr });
-    } catch (err) {
-      stderr.write(`Could not analyze existing .gitignore: ${err.message}\n`);
+    analysis = tryAnalyzeGitignore({
+      gitignorePath: existingGitignorePath,
+      distRoot,
+      userRoot: options.userRoot,
+      workspaceRoot: options.workspaceRoot,
+      projectPath,
+      // Ask analyzeGitignore to preserve the source byte text of each rule so
+      // custom-rule carry-forward below keeps the user's original line exactly
+      // (including trailing whitespace and quoting).
+      keepRawLines: true
+    }, { stdout, stderr, cwd }, 'adopt.analyze');
+
+    if (analysis === null) {
+      // The outer `if (fs.existsSync(existingGitignorePath))` already confirmed
+      // the file exists, so the analysis failure means the file is present but
+      // unparseable. Custom rules cannot be carried forward — surface this
+      // explicitly.
       stderr.write('Proceeding without analysis.\n');
-      // The outer `if (fs.existsSync(existingGitignorePath))` at line 85
-      // already confirmed the file exists, so the analysis failure means the
-      // file is present but unparseable. Custom rules cannot be carried
-      // forward — surface this explicitly.
       const warning = 'Could not analyze existing .gitignore -- custom rules will NOT be carried forward.';
       warnings.push(warning);
       stderr.write(`${warning}\n`);
-      debugError(err, 'adopt.analyze', env);
     }
 
     if (analysis) {
@@ -137,9 +124,10 @@ async function runAdoptWorkflow(options, env) {
         return !match || match.matched.length < match.total;
       });
 
-      // Find matched components NOT in the chosen preset (will be lost if not in custom)
+      // Find matched components NOT in the chosen preset (will be lost if not in custom).
+      // Include both full and partial matches — the user decides interactively.
       const presetSet = new Set(presetComponents);
-      const lostComponents = analysis.matchedComponents.filter(c => c.classification === 'full' && !presetSet.has(c.id));
+      const lostComponents = analysis.matchedComponents.filter(c => (c.classification === 'full' || c.classification === 'partial') && !presetSet.has(c.id));
 
       if (newComponents.length > 0) {
         stdout.write(`Preset "${options.preset}" will add ${newComponents.length} new component(s):\n`);
@@ -150,14 +138,22 @@ async function runAdoptWorkflow(options, env) {
       }
 
       if (lostComponents.length > 0) {
-        const lostWarning = `Current .gitignore has rules from ${lostComponents.length} component(s) not in preset "${options.preset}":`;
+        const lostWarning = `Detected ${lostComponents.length} component(s) in .gitignore not in preset "${options.preset}"`;
         warnings.push(lostWarning);
-        stdout.write(`⚠ ${lostWarning}\n`);
-        for (const comp of lostComponents) {
-          stdout.write(`  ${comp.id} (${comp.total} rules)\n`);
-          warnings.push(`  ${comp.id}: ${comp.total} rules will not be in generated .gitignore unless added as extra components`);
+
+        // Interactive: let user pick which to add (full matches pre-selected, partial opt-in)
+        const selectedIds = await pickExtraComponents(lostComponents, { stdout, stderr, ask: env.ask, stdin: env.stdin });
+        if (selectedIds.length > 0) {
+          if (!options.components) options.components = [];
+          for (const id of selectedIds) {
+            if (!options.components.includes(id)) {
+              options.components.push(id);
+            }
+          }
+          stdout.write(`Added ${selectedIds.length} extra component(s): ${selectedIds.join(', ')}\n`);
+        } else {
+          stdout.write('No extra components added.\n');
         }
-        stdout.write('  Add them as extra components in ignorekit.json if needed.\n\n');
       }
 
       // Check if the chosen preset is the best match
@@ -232,28 +228,11 @@ async function runAdoptWorkflow(options, env) {
   // Generate .gitignore
   const gitignore = await generateGitignore({ config, resolver, env });
   const gitignorePath = path.join(projectPath, '.gitignore');
+  const configPath = path.join(projectPath, 'ignorekit.json');
 
-  // Show preview in console
-  stdout.write(`\n--- Preview (.gitignore) ---\n`);
-  stdout.write(gitignore);
-  stdout.write(`--- End preview ---\n\n`);
-
-  // Without --apply, adopt is a dry run: preview only, no files written.
-  // The --apply flag is the safety gate that turns the preview into actual
-  // writes. This matches the documented contract: "adopt writes directly to
-  // .gitignore" only when the user explicitly opts in with --apply.
-  //
-  // Preview mode returns exit code 0 because the command succeeded at its
-  // stated purpose (showing the user what would change). Exit 1 is reserved
-  // for errors and user cancellations, not for "no files written" which is
-  // the expected outcome of a dry run. The `preview: true` field in the
-  // return value lets programmatic callers distinguish preview from write.
-  if (!options.apply) {
-    stdout.write('Preview mode — no files written. Use --apply to write.\n');
-    return { projectPath, configPath: null, cachedRemoval: { action: 'skipped', files: [] }, analysis, warnings, preview: true };
-  }
-
-  // Confirm before writing (if env.confirm provided)
+  // Confirm the selection before writing. The confirm gate uses env.confirm
+  // which is provided by buildCreateEnv in the CLI dispatch — --yes skips it,
+  // and non-interactive environments (CI, piped stdin) get no confirm callback.
   if (env.confirm) {
     const proceed = await env.confirm();
     if (!proceed) {
@@ -262,25 +241,62 @@ async function runAdoptWorkflow(options, env) {
     }
   }
 
-  // Backup existing .gitignore before overwriting. Skip backup if a previous
-  // backup already exists — overwriting it would destroy the user's original
-  // file from a prior adopt run. The user can manually delete .gitignore.bak
-  // if they want a fresh backup.
-  if (fs.existsSync(gitignorePath)) {
-    const backupPath = path.join(projectPath, '.gitignore.bak');
-    if (fs.existsSync(backupPath)) {
-      stdout.write(`Skipping backup — .gitignore.bak already exists (preserving previous backup)\n`);
+  // Overwrite-config: ask instead of error. When --overwrite-config is passed,
+  // the question is skipped (the flag is the explicit answer). When the flag is
+  // NOT passed and a config already exists, ask interactively. In non-interactive
+  // mode (no env.ask), throw the error — CI must use the flag explicitly.
+  if (fs.existsSync(configPath) && !options.overwriteConfig) {
+    if (env.ask) {
+      const overwrite = await env.ask('Overwrite existing ignorekit.json? [Y/n]: ');
+      if (overwrite.trim().toLowerCase() === 'n') {
+        stdout.write('Cancelled — config not overwritten.\n');
+        return { projectPath, configPath: null, cachedRemoval: { action: 'skipped', files: [] }, analysis, warnings };
+      }
     } else {
-      fs.copyFileSync(gitignorePath, backupPath);
-      stdout.write(`Backup saved to .gitignore.bak\n`);
+      throw new Error(`Config already exists: ${configPath}. Use --overwrite-config to replace.`);
+    }
+  }
+
+  // Preview: ask instead of auto-showing. When --preview is passed, show the
+  // preview directly (the flag is the explicit answer). When the flag is NOT
+  // passed, ask interactively. In non-interactive mode (no env.ask), skip the
+  // preview entirely — CI doesn't need a preview unless explicitly requested.
+  if (options.preview) {
+    stdout.write(`\n--- Preview (.gitignore) ---\n`);
+    stdout.write(gitignore);
+    stdout.write(`--- End preview ---\n\n`);
+  } else if (env.ask) {
+    const showPreview = await env.ask('Show preview of generated .gitignore? [Y/n]: ');
+    if (!showPreview || showPreview.trim().toLowerCase() !== 'n') {
+      stdout.write(`\n--- Preview (.gitignore) ---\n`);
+      stdout.write(gitignore);
+      stdout.write(`--- End preview ---\n\n`);
+    } else {
+      stdout.write('Preview skipped.\n');
+    }
+  }
+
+  // Generate: ask whether to write the .gitignore. When --generate is passed
+  // (or the legacy --apply flag), skip the question and write directly. When
+  // neither flag is passed, ask interactively. In non-interactive mode (no
+  // env.ask), skip writing — the user can regenerate later with --generate.
+  if (!options.generate && !options.apply) {
+    if (env.ask) {
+      const doGenerate = await env.ask('Generate .gitignore? [Y/n]: ');
+      if (doGenerate.trim().toLowerCase() === 'n') {
+        stdout.write('Skipped — no files written.\n');
+        return { projectPath, configPath: null, cachedRemoval: { action: 'skipped', files: [] }, analysis, warnings };
+      }
+    } else {
+      stdout.write('Skipped — no files written.\n');
+      return { projectPath, configPath: null, cachedRemoval: { action: 'skipped', files: [] }, analysis, warnings };
     }
   }
 
   writeJson(configPath, config);
   // Non-atomic write: a crash between these two writes could leave an
   // ignorekit.json pointing to an unwritten .gitignore. This is acceptable
-  // because (a) the backup preserves the user's original .gitignore, and
-  // (b) re-running adopt restores the correct state. An atomic
+  // because re-running adopt restores the correct state. An atomic
   // write-to-temp-then-rename would add filesystem-specific complexity
   // (Windows doesn't support rename over an existing file) for a scenario
   // that is both rare and recoverable.

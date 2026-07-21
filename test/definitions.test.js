@@ -578,3 +578,57 @@ test('assertDefinitionId rejects dot-segment in middle of id (a/./b normalizes t
   assert.ok(caught, 'assertDefinitionId should reject "a/./b" (path-aliasing)');
   assert.match(caught.message, /Invalid definition id/);
 });
+
+// --- debugError env contract: listDefinitions must route debug to env.stderr ---
+
+test('listDefinitions routes debugError to env.stderr when env is provided', () => {
+  // When IGNOREKIT_DEBUG=1 and listDefinitions encounters an error (e.g. EACCES
+  // on a subdirectory), the debug output must go to env.stderr rather than
+  // leaking to process.stderr. Without the env parameter, tests cannot capture
+  // the debug output and it leaks to the real stderr.
+  const { listDefinitions } = require('../src/core/fs');
+  const workspace = createTempWorkspace();
+  try {
+    // Create a directory structure where a subdirectory is unreadable.
+    // listDefinitions should catch the error and route debug to env.stderr.
+    workspace.writeText('dist/components/local/visible.gitignore', 'visible/\n');
+    const componentsDir = workspace.path('dist/components');
+
+    // Mock fs.readdirSync to throw EACCES for the components directory.
+    // This simulates an unreadable layer directory.
+    const origReaddirSync = fs.readdirSync;
+    fs.readdirSync = function(dirPath, options) {
+      if (dirPath === componentsDir) {
+        const err = new Error('EACCES: permission denied');
+        err.code = 'EACCES';
+        throw err;
+      }
+      return origReaddirSync.apply(this, arguments);
+    };
+
+    // Capture debug output via env.stderr
+    const origDebug = process.env.IGNOREKIT_DEBUG;
+    process.env.IGNOREKIT_DEBUG = '1';
+    const stderrChunks = [];
+    try {
+      const result = listDefinitions(componentsDir, '.gitignore', {
+        stderr: { write: (text) => stderrChunks.push(String(text)) },
+        stdout: { write: () => {} },
+        cwd: process.cwd()
+      });
+
+      // listDefinitions should return empty on EACCES, not throw
+      assert.deepEqual(result, []);
+
+      // Debug output must appear in env.stderr, not leak to process.stderr
+      const stderrText = stderrChunks.join('');
+      assert.match(stderrText, /EACCES/,
+        `debug output should appear in env.stderr, got: ${stderrText || '(empty)'}`);
+    } finally {
+      process.env.IGNOREKIT_DEBUG = origDebug;
+      fs.readdirSync = origReaddirSync;
+    }
+  } finally {
+    workspace.cleanup();
+  }
+});

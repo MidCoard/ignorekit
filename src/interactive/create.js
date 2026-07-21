@@ -5,10 +5,9 @@ const path = require('path');
 const { USER_ROOT, DIST_ROOT } = require('../core/path');
 const { parseSignificantLines, normalizePattern } = require('../core/text');
 const { buildResolver } = require('../core/resolver-factory');
-const { analyzeGitignore } = require('../workflows/analyze');
+const { analyzeGitignore, tryAnalyzeGitignore } = require('../workflows/analyze');
 const { formatMatchedComponentsHeader } = require('../workflows/_format');
 const { debugError } = require('../core/debug');
-const { extractStreams } = require('../core/env');
 const { MAX_CONTENT_BYTES } = require('../core/constants');
 
 function normalizeAnswer(value) {
@@ -25,7 +24,10 @@ function normalizeAnswer(value) {
  */
 function parseNumberRanges(input, max) {
   const indices = [];
-  for (const token of input.split(',')) {
+  // Normalize spaces to commas so "1 2 3" works the same as "1,2,3"
+  const normalized = input.replace(/\s+/g, ',');
+  for (const token of normalized.split(',')) {
+    if (token.trim() === '') continue; // skip empty tokens from trailing/multiple commas
     const parts = token.trim().split('-', 2);
     // Reject malformed tokens like "1--3" (splits to ["1", ""]), "1-" (splits
     // to ["1", ""]), or "-" (splits to ["", ""]). A valid token is either a
@@ -168,9 +170,8 @@ async function chooseRulesSmart(state, env) {
     // exhaustion that would occur if readFileSync buffered the entire file
     // before the analyzeGitignore size check could fire.
     if (err.code === 'EFILETOOLARGE') {
-      const { stderr: analysisStderr } = extractStreams(env);
-      analysisStderr.write(`Source file too large to read: ${err.message}\n`);
-      analysisStderr.write(`Falling back to inline rule entry.\n`);
+      env.stderr.write(`Source file too large to read: ${err.message}\n`);
+      env.stderr.write(`Falling back to inline rule entry.\n`);
       debugError(err, 'choose-rules-smart.size-guard', env);
       return null;
     }
@@ -187,27 +188,23 @@ async function chooseRulesSmart(state, env) {
   // .gitignore past analyzeGitignore's 1 MiB guard) shouldn't break the
   // interactive flow — the user can still enter rules inline. Surface the
   // error to stderr under IGNOREKIT_DEBUG and signal the caller to fall back.
-  let analysis;
-  try {
-    analysis = analyzeGitignore({
-      gitignorePath: sourcePath,
-      distRoot: env.distRoot || DIST_ROOT,
-      userRoot: env.userRoot,
-      workspaceRoot: env.workspaceRoot,
-      // Pass the already-read content so analyzeGitignore doesn't re-read the
-      // file we just parsed above (avoids a redundant disk hit and keeps the
-      // single read site consistent with what the user sees on stdout).
-      content: rawContent,
-      // The source .gitignore may live outside the project root (e.g. passed
-      // via --from). Signal detection must run against the actual project
-      // directory (env.cwd), not the directory containing the source file.
-      projectPath: env.cwd
-    }, { stderr: env.stderr });
-  } catch (err) {
-    const { stderr: analysisStderr } = extractStreams(env);
-    analysisStderr.write(`Could not analyze ${path.basename(sourcePath)}: ${err.message}\n`);
-    analysisStderr.write(`Falling back to inline rule entry.\n`);
-    debugError(err, 'choose-rules-smart.analyze', env);
+  const analysis = tryAnalyzeGitignore({
+    gitignorePath: sourcePath,
+    distRoot: env.distRoot || DIST_ROOT,
+    userRoot: env.userRoot,
+    workspaceRoot: env.workspaceRoot,
+    // Pass the already-read content so analyzeGitignore doesn't re-read the
+    // file we just parsed above (avoids a redundant disk hit and keeps the
+    // single read site consistent with what the user sees on stdout).
+    content: rawContent,
+    // The source .gitignore may live outside the project root (e.g. passed
+    // via --from). Signal detection must run against the actual project
+    // directory (env.cwd), not the directory containing the source file.
+    projectPath: env.cwd
+  }, { stdout: env.stdout, stderr: env.stderr, cwd: env.cwd }, 'choose-rules-smart.analyze');
+
+  if (analysis === null) {
+    env.stderr.write(`Falling back to inline rule entry.\n`);
     return null;
   }
 
@@ -355,4 +352,61 @@ async function promptPresetCreation(options, env) {
   return state;
 }
 
-module.exports = { promptComponentCreation, promptPresetCreation, selectItems, parseToggleCommand, runToggleSelection, parseNumberRanges, chooseRulesSmart };
+/**
+ * Interactively select which extra components to add to a project config.
+ *
+ * Presents matched-but-not-in-preset components as a numbered list. Full matches
+ * are pre-selected by default (safe to include — all rules are already present).
+ * Partial matches are NOT pre-selected (they may add unwanted rules).
+ *
+ * In non-interactive mode (no env.ask), auto-adds only full matches.
+ *
+ * @param {object[]} lostComponents - Components matched in .gitignore but not in preset
+ * @param {string} lostComponents[].id - Component ID (e.g. 'local/ai-claude')
+ * @param {string} lostComponents[].classification - 'full' or 'partial'
+ * @param {number} lostComponents[].matched - Number of matched rules
+ * @param {number} lostComponents[].total - Total rules in component
+ * @param {object} env - Environment streams ({ stdout, stderr, ask, stdin })
+ * @returns {Promise<string[]>} Selected component IDs
+ */
+async function pickExtraComponents(lostComponents, env) {
+  const ids = lostComponents.map(c => c.id);
+
+  // Pre-select full matches (safe — all rules already present in .gitignore)
+  const fullMatchIndices = [];
+  for (let i = 0; i < lostComponents.length; i++) {
+    if (lostComponents[i].classification === 'full') {
+      fullMatchIndices.push(i);
+    }
+  }
+
+  // Non-interactive: auto-add full matches only
+  if (!env.ask) {
+    return fullMatchIndices.map(i => ids[i]);
+  }
+
+  // Render the numbered list with match status
+  env.stdout.write('\n');
+  for (let i = 0; i < lostComponents.length; i++) {
+    const comp = lostComponents[i];
+    const status = comp.classification === 'full' ? '✓ full' : '✗ partial';
+    const selected = comp.classification === 'full' ? ' [x]' : ' [ ]';
+    env.stdout.write(`  ${i + 1}. ${comp.id.padEnd(24)} ${status} (${comp.matched.length}/${comp.total} rules)${selected}\n`);
+  }
+
+  // Build default label (e.g. "1-2" for the first two full matches)
+  let defaultLabel = 'none';
+  const defaultItems = fullMatchIndices.map(i => ids[i]);
+  if (defaultItems.length > 0) {
+    defaultLabel = fullMatchIndices.map(i => i + 1).join(',');
+  }
+
+  while (true) {
+    const answer = await env.ask(`Select extra components to add (numbers, ranges, all, none) [${defaultLabel}]: `);
+    const result = selectItems(ids, answer, defaultItems);
+    if (result !== null) return result;
+    env.stdout.write(`Invalid selection. Enter numbers (1-${ids.length}), ranges (1-3), 'all', 'none', or press Enter for defaults.\n`);
+  }
+}
+
+module.exports = { promptComponentCreation, promptPresetCreation, selectItems, parseToggleCommand, runToggleSelection, parseNumberRanges, chooseRulesSmart, pickExtraComponents };

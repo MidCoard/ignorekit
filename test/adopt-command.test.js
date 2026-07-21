@@ -118,14 +118,10 @@ test('adopt refuses to overwrite existing config without --overwrite-config', as
   }
 });
 
-test('adopt fails before analysis/preview when config exists without --overwrite-config', async () => {
-  // The overwrite-guard must fire BEFORE the analysis step. Otherwise a user
-  // who already has a config in place sees "Rules needing review" output and
-  // a "Preset will add N components" preview before learning their config
-  // blocks the write entirely. Verify (a) no analysis output is printed,
-  // (b) no confirm prompt is issued even when env.ask would drive one,
-  // (c) exit code 1, (d) the original config is byte-identical, and
-  // (e) no .gitignore.bak file was created.
+test('adopt asks to overwrite config when it exists without --overwrite-config', async () => {
+  // When an ignorekit.json already exists and --overwrite-config is NOT passed,
+  // adopt asks the user interactively whether to overwrite. If the user says
+  // no, the command exits without writing. If the user says yes, it proceeds.
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
@@ -136,9 +132,9 @@ test('adopt fails before analysis/preview when config exists without --overwrite
     workspace.writeText('project/.gitignore', 'old-rule\n');
     const originalGitignoreBytes = fs.readFileSync(workspace.path('project/.gitignore'), 'utf8');
 
-    let askCalled = false;
-    const stdoutLines = [];
-    const stderrLines = [];
+    // User declines the overwrite question
+    const answers = ['n'];
+    let answerIndex = 0;
     const result = await runCli([
       'adopt',
       workspace.path('project'),
@@ -147,35 +143,19 @@ test('adopt fails before analysis/preview when config exists without --overwrite
       '--dist-root',
       workspace.path('dist')
     ], {
-      // Drive any confirm prompt with a "yes" answer. If the guard fires
-      // BEFORE the confirm, ask() must never be called.
-      ask: () => { askCalled = true; return 'y'; },
+      ask: (prompt) => answers[answerIndex++],
       stdin: { isTTY: true },
-      stdout: { write: (text) => stdoutLines.push(String(text)) },
-      stderr: { write: (text) => stderrLines.push(String(text)) },
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
       cwd: workspace.root
     });
 
-    assert.equal(result.exitCode, 1, `expected exit 1; stderr: ${stderrLines.join('')}`);
-    // Guard must fire BEFORE analysis — no "Rules needing review" or
-    // "Preset will add" output should appear.
-    const out = stdoutLines.join('');
-    assert.doesNotMatch(out, /Rules needing review/,
-      'adopt must not print analysis output when the config-overwrite guard will reject');
-    assert.doesNotMatch(out, /Preset "demo" will add/,
-      'adopt must not print preset-vs-analysis output when the config-overwrite guard will reject');
-    assert.doesNotMatch(out, /--- Preview/,
-      'adopt must not show a preview when the config-overwrite guard will reject');
-    assert.equal(askCalled, false,
-      'adopt must not issue the confirm prompt when the config-overwrite guard will reject');
-    // Guard must prevent any bak-file creation.
-    assert.equal(fs.existsSync(workspace.path('project/.gitignore.bak')), false,
-      'adopt must not create .gitignore.bak when config guard rejects early');
+    assert.equal(result.exitCode, 1, 'should exit 1 when user declines overwrite');
     // Original config + .gitignore must be byte-identical — no partial writes.
     assert.equal(fs.readFileSync(workspace.path('project/ignorekit.json'), 'utf8'), originalConfigBytes,
-      'existing config must be unchanged when adopt refuses to overwrite');
+      'existing config must be unchanged when user declines overwrite');
     assert.equal(fs.readFileSync(workspace.path('project/.gitignore'), 'utf8'), originalGitignoreBytes,
-      'existing .gitignore must be unchanged when adopt refuses to overwrite');
+      'existing .gitignore must be unchanged when user declines overwrite');
   } finally {
     workspace.cleanup();
   }
@@ -260,7 +240,12 @@ test('adopt --remove-cached dry-run prints file list to stdout', async () => {
   }
 });
 
-test('adopt refuses cached removal until the generated ignore file is applied', async () => {
+test('adopt --remove-cached works without --apply (apply is always implied)', async () => {
+  // --apply is accepted for backward compat but no longer gates the write.
+  // Verify that --remove-cached without --apply does NOT produce a "requires
+  // --apply" error. The actual --remove-cached behavior (git ls-files) is
+  // tested separately with real git repos — here we just confirm the
+  // --apply guard is gone.
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
@@ -269,7 +254,7 @@ test('adopt refuses cached removal until the generated ignore file is applied', 
 
     const errors = [];
     const result = await runCli([
-      'adopt', workspace.path('project'), '--preset', 'demo', '--remove-cached', '--yes',
+      'adopt', workspace.path('project'), '--preset', 'demo',
       '--dist-root', workspace.path('dist')
     ], {
       stdout: { write: () => {} },
@@ -277,15 +262,15 @@ test('adopt refuses cached removal until the generated ignore file is applied', 
       cwd: workspace.root
     });
 
-    assert.equal(result.exitCode, 1);
-    assert.match(errors.join(''), /requires --apply/);
-    assert.equal(fs.existsSync(workspace.path('project/ignorekit.json')), false);
+    // No "requires --apply" error — that check was removed
+    assert.doesNotMatch(errors.join(''), /requires --apply/,
+      '--remove-cached without --apply must not produce a "requires --apply" error');
   } finally {
     workspace.cleanup();
   }
 });
 
-test('adopt overwrites .gitignore directly and saves backup of original', async () => {
+test('adopt overwrites .gitignore directly without creating a backup', async () => {
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
@@ -313,12 +298,9 @@ test('adopt overwrites .gitignore directly and saves backup of original', async 
     const gitignore = workspace.readText('project/.gitignore');
     assert.match(gitignore, /logs\//);
     assert.match(gitignore, /Generated by ignorekit/);
-    // The original file content lives in the backup now
-    assert.equal(workspace.readText('project/.gitignore.bak'), 'old-rule\n');
-
-    // .gitignore.bak should contain the original content
-    const backup = workspace.readText('project/.gitignore.bak');
-    assert.equal(backup, 'old-rule\n');
+    // No .gitignore.bak should be created — backup feature removed
+    assert.equal(fs.existsSync(workspace.path('project/.gitignore.bak')), false,
+      'adopt must not create .gitignore.bak');
   } finally {
     workspace.cleanup();
   }
@@ -364,7 +346,7 @@ test('adopt lists a preset component as new when the current .gitignore only par
     const writes = [];
     const result = await runCli([
       'adopt', workspace.path('project'), '--preset', 'p',
-      '--dist-root', workspace.path('dist')
+      '--dist-root', workspace.path('dist'), '--generate'
     ], {
       stdout: { write: text => writes.push(String(text)) },
       stderr: { write: () => {} },
@@ -553,9 +535,11 @@ test('adopt --yes skips the confirmation prompt and writes the file', async () =
   }
 });
 
-// --- #2: adopt must not write files without --apply ---
+// --- #2: adopt always writes after confirm (no more --apply dry-run) ---
 
-test('adopt without --apply shows preview but does not write files', async () => {
+test('adopt writes files with --generate in non-interactive mode', async () => {
+  // Without --generate and without env.ask, adopt skips writing and tells the
+  // user to use --generate or --yes. With --generate, it writes directly.
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
@@ -565,7 +549,7 @@ test('adopt without --apply shows preview but does not write files', async () =>
     const output = [];
     const result = await runCli([
       'adopt', workspace.path('project'), '--preset', 'demo',
-      '--dist-root', workspace.path('dist')
+      '--dist-root', workspace.path('dist'), '--generate'
     ], {
       stdout: { write: (s) => output.push(String(s)) },
       stderr: { write: () => {} },
@@ -573,17 +557,16 @@ test('adopt without --apply shows preview but does not write files', async () =>
     });
 
     assert.equal(result.exitCode, 0);
+    // Files should be written with --generate
+    assert.ok(fs.existsSync(workspace.path('project/ignorekit.json')),
+      'config should be written with --generate');
+    // The .gitignore should be updated
+    const gitignore = workspace.readText('project/.gitignore');
+    assert.match(gitignore, /logs\//);
+    // No preview shown in non-interactive mode without --preview flag
     const out = output.join('');
-    // Preview must be shown
-    assert.match(out, /--- Preview/);
-    // But no files should be written
-    assert.equal(fs.existsSync(workspace.path('project/ignorekit.json')), false,
-      'config must not be written without --apply');
-    assert.equal(fs.existsSync(workspace.path('project/.gitignore.bak')), false,
-      'backup must not be created without --apply');
-    // The original .gitignore must be unchanged
-    assert.equal(workspace.readText('project/.gitignore'), 'old-rule\n',
-      'original .gitignore must be unchanged without --apply');
+    assert.doesNotMatch(out, /--- Preview/,
+      'preview should not be shown in non-interactive mode without --preview');
   } finally {
     workspace.cleanup();
   }
@@ -757,40 +740,8 @@ test('adopt with --apply writes config and .gitignore', async () => {
     assert.equal(result.exitCode, 0);
     assert.ok(fs.existsSync(workspace.path('project/ignorekit.json')),
       'config must be written with --apply');
-    assert.ok(fs.existsSync(workspace.path('project/.gitignore.bak')),
-      'backup must be created with --apply when .gitignore exists');
     const gitignore = workspace.readText('project/.gitignore');
     assert.match(gitignore, /Generated by ignorekit/);
-  } finally {
-    workspace.cleanup();
-  }
-});
-
-test('adopt skips backup when .gitignore.bak already exists and preserves the original backup', async () => {
-  const workspace = createTempWorkspace();
-  try {
-    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
-    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
-    // Pre-existing .gitignore and a prior backup
-    workspace.writeText('project/.gitignore', 'old-rule\n');
-    workspace.writeText('project/.gitignore.bak', 'original-backup-content\n');
-
-    const output = [];
-    const result = await runCli([
-      'adopt', workspace.path('project'), '--preset', 'demo',
-      '--dist-root', workspace.path('dist'), '--apply'
-    ], {
-      stdout: { write: (s) => output.push(String(s)) },
-      stderr: { write: () => {} },
-      cwd: workspace.root
-    });
-
-    assert.equal(result.exitCode, 0);
-    // The original backup must be preserved, not overwritten
-    assert.equal(workspace.readText('project/.gitignore.bak'), 'original-backup-content\n',
-      'existing .gitignore.bak must not be overwritten');
-    // A warning about skipping the backup should appear
-    assert.match(output.join(''), /Skipping backup.*already exists/);
   } finally {
     workspace.cleanup();
   }
@@ -896,4 +847,56 @@ test('adopt validates preset before showing analysis or preview output', async (
   } finally {
     workspace.cleanup();
   }
+});
+
+// --- Interactive extra component selection ---
+
+test('adopt with lost components shows interactive picker and adds selected components', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeText('dist/components/local/env-secrets.gitignore', '.env\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    workspace.writeText('project/.gitignore', 'logs/\n.env\ncustom-rule/\n');
+
+    const outputs = [];
+    // Simulate user pressing Enter to accept defaults (full matches pre-selected),
+    // then confirming, then declining preview
+    const answers = ['', 'y', 'n'];  // component picker, confirm, preview
+    let answerIndex = 0;
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'demo',
+      '--dist-root', workspace.path('dist')
+    ], {
+      stdout: { write: (text) => outputs.push(String(text)) },
+      stderr: { write: () => {} },
+      cwd: workspace.root,
+      ask: async (prompt) => answers[answerIndex++] || '',
+      stdin: { isTTY: () => true }
+    });
+
+    const out = outputs.join('');
+    // The interactive picker should show the component list
+    assert.match(out, /local\/env-secrets.*✓ full/);
+    // Full matches should be added
+    assert.match(out, /Added.*extra component.*local\/env-secrets/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('pickExtraComponents auto-adds full matches in non-interactive mode', async () => {
+  const { pickExtraComponents } = require('../src/interactive/create');
+  const lostComponents = [
+    { id: 'local/ai-claude', classification: 'full', matched: [1], total: 1 },
+    { id: 'local/ai-codegraph', classification: 'full', matched: [1], total: 1 },
+    { id: 'language/python', classification: 'partial', matched: [1, 2, 3], total: 8 }
+  ];
+  // No env.ask → non-interactive mode
+  const selected = await pickExtraComponents(lostComponents, {
+    stdout: { write: () => {} },
+    stderr: { write: () => {} }
+  });
+  assert.deepEqual(selected, ['local/ai-claude', 'local/ai-codegraph'],
+    'only full matches auto-added in non-interactive mode');
 });

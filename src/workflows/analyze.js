@@ -7,7 +7,7 @@ const { resolvePresetComponents } = require('../definitions/resolver');
 const { buildResolver } = require('../core/resolver-factory');
 const { DIST_ROOT } = require('../core/path');
 const { detectProjectSignals } = require('../detection/project-signals');
-const { formatMatchedComponentsTable } = require('./_format');
+const { formatMatchedComponentsTable, ID_PAD } = require('./_format');
 const { debugError } = require('../core/debug');
 const { MAX_CONTENT_BYTES } = require('../core/constants');
 const { extractStreams } = require('../core/env');
@@ -264,14 +264,11 @@ function matchAllComponents(resolver, inputLines, env) {
   // Compute unmatched lines (using normalized comparison)
   const unmatchedLines = inputLines.filter(line => !allMatchedNormalized.has(normalizePattern(line)));
 
-  // Unmatched lines relative to the *displayed* subset of matched components.
-  // The display filter hides low-signal partials, so a line those hidden
-  // components covered still needs to appear as unmatched to the user.
-  const displayedRules = new Set();
-  for (const component of displayMatchedComponents) {
-    for (const line of component.matched) displayedRules.add(normalizePattern(line));
-  }
-  const displayedUnmatchedLines = inputLines.filter(line => !displayedRules.has(normalizePattern(line)));
+  // Unmatched lines use ALL matched components (not just displayed ones) so that
+  // a rule covered by a hidden low-signal partial is not falsely reported as
+  // unmatched. The display filter hides noise from the component table, but a
+  // covered rule is covered regardless of whether its component is displayed.
+  const displayedUnmatchedLines = inputLines.filter(line => !allMatchedNormalized.has(normalizePattern(line)));
 
   const totalMatchedCount = matchedComponents.reduce((sum, c) => sum + c.matched.length, 0);
 
@@ -342,7 +339,7 @@ function scoreAllPresets(resolver, componentResults, totalInputLines, projectPat
  * @returns {{ totalLines: number, matchedComponents: object[], unmatchedLines: string[], bestPreset: object|null }}
  */
 function runAnalyzeWorkflow(options, env) {
-  const { stdout, cwd } = extractStreams(env);
+  const { stdout, stderr, cwd } = extractStreams(env);
 
   const analysis = analyzeGitignore({
     gitignorePath: path.resolve(cwd, options.gitignorePath),
@@ -350,7 +347,7 @@ function runAnalyzeWorkflow(options, env) {
     userRoot: options.userRoot,
     workspaceRoot: options.workspaceRoot,
     projectPath: options.projectPath
-  }, { stderr: env.stderr });
+  }, { stdout, stderr, cwd });
 
   // Header
   stdout.write(`Analyzing: ${path.basename(options.gitignorePath)} (${analysis.totalLines} significant lines)\n\n`);
@@ -383,7 +380,7 @@ function runAnalyzeWorkflow(options, env) {
       stdout.write('Preset suggestions:\n');
       for (const ps of analysis.allPresets.slice(0, 3)) {
         const matchLabel = `${ps.fullCount} of ${ps.componentCount} preset components fully matched`;
-        stdout.write(`  ${ps.id.padEnd(24)} ${matchLabel} (score: ${ps.score})\n`);
+        stdout.write(`  ${ps.id.padEnd(ID_PAD)} ${matchLabel} (score: ${ps.score})\n`);
         for (const evidence of ps.evidence) {
           stdout.write(`    ${evidence}\n`);
         }
@@ -397,6 +394,8 @@ function runAnalyzeWorkflow(options, env) {
       stdout.write('No presets available for suggestion.\n');
     }
     stdout.write('\n');
+  } else {
+    stdout.write('Use --suggest-preset to get preset recommendations.\n');
   }
 
   return {
@@ -413,4 +412,46 @@ function runAnalyzeWorkflow(options, env) {
   };
 }
 
-module.exports = { runAnalyzeWorkflow, analyzeGitignore, matchComponent, classifyMatch, scorePreset, matchAllComponents, scoreAllPresets };
+/**
+ * Attempt to analyze a .gitignore file, catching errors and degrading
+ * gracefully. Centralizes the "try analyzeGitignore, catch errors, write
+ * diagnostic to stderr, return null" pattern that was duplicated across
+ * adopt, create, and the preset picker.
+ *
+ * When analysis fails (commonly a .gitignore past the 1 MiB size guard),
+ * the caller can still proceed — they just miss the matched-component
+ * preview and custom-rule carry-forward. The error is surfaced to stderr
+ * and to IGNOREKIT_DEBUG so the user can diagnose the failure.
+ *
+ * @param {object} analyzeOptions - Options forwarded to analyzeGitignore
+ * @param {string} analyzeOptions.gitignorePath - Path to the .gitignore file
+ * @param {string} [analyzeOptions.distRoot] - Dist root for definitions
+ * @param {string} [analyzeOptions.userRoot] - User-level override directory
+ * @param {string} [analyzeOptions.workspaceRoot] - Workspace-level definition directory
+ * @param {string} [analyzeOptions.projectPath] - Project root for signal detection
+ * @param {string} [analyzeOptions.content] - Pre-read content (skips disk read)
+ * @param {boolean} [analyzeOptions.keepRawLines] - Preserve original byte text
+ * @param {object} env - Environment streams ({ stdout, stderr, cwd })
+ * @param {string} errorContext - Label for debugError logging (e.g. 'adopt.analyze')
+ * @param {string} [errorMessage] - Override the stderr message on failure.
+ *   Defaults to "Could not analyze <basename>: <err.message>".
+ * @param {object} [options] - Additional options
+ * @param {boolean} [options.throwOnError=false] - When true, re-throws the error after
+ *   logging instead of returning null. Use when the caller cannot proceed without
+ *   analysis (e.g. component creation with --from where the user must switch to --rule).
+ * @returns {object|null} The analysis result, or null on failure (when throwOnError is false)
+ */
+function tryAnalyzeGitignore(analyzeOptions, env, errorContext, errorMessage, options = {}) {
+  const { stderr } = extractStreams(env);
+  try {
+    return analyzeGitignore(analyzeOptions, env);
+  } catch (err) {
+    const label = errorMessage || `Could not analyze ${path.basename(analyzeOptions.gitignorePath)}: ${err.message}`;
+    stderr.write(`${label}\n`);
+    debugError(err, errorContext, env);
+    if (options.throwOnError) throw err;
+    return null;
+  }
+}
+
+module.exports = { runAnalyzeWorkflow, analyzeGitignore, matchComponent, classifyMatch, scorePreset, matchAllComponents, scoreAllPresets, tryAnalyzeGitignore };

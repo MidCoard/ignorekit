@@ -60,11 +60,11 @@ function formatMatchedComponentsHeader(components, { label = 'Already covered by
  * exact wording and spacing stays consistent across all three entry points.
  *
  * @param {object[]} components - Matched components to display
- * @param {object} [opts]
- * @param {object} [opts.stdout=process.stdout] - Writable stream
+ * @param {object} opts
+ * @param {object} opts.stdout - Writable stream (required — every caller passes it explicitly)
  * @param {string} [opts.label='Already covered by'] - Header prefix
  */
-function writeMatchedComponentsBlock(components, { stdout = process.stdout, label = 'Already covered by' } = {}) {
+function writeMatchedComponentsBlock(components, { stdout, label = 'Already covered by' } = {}) {
   if (!components || components.length === 0) return;
   stdout.write(`${label} ${components.length} known component(s):\n`);
   stdout.write(formatMatchedComponentsTable(components));

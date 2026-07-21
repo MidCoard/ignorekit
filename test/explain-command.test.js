@@ -348,3 +348,70 @@ test('explain skips missing extra component instead of crashing', () => {
     workspace.cleanup();
   }
 });
+
+// --- debugError env contract: printComponentDetail must pass full env ---
+
+test('explain routes debugError for unreadable component to env.stderr', () => {
+  // When IGNOREKIT_DEBUG=1 and a component cannot be read, the debug output
+  // must go to env.stderr (via the full env object), not leak to process.stderr.
+  // This tests that printComponentDetail receives full { stdout, stderr, cwd }
+  // env instead of a partial { stdout, stderr } streams object.
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeJson('dist/presets/demo.json', {
+      name: 'demo',
+      components: ['local/secret']
+    });
+    workspace.writeJson('ignorekit.json', {
+      version: 1,
+      name: 'debug-test',
+      preset: 'demo',
+      provider: { name: 'local' },
+      components: [],
+      custom: [],
+      addons: {}
+    });
+
+    // Create the component file, then mock readComponent to throw EACCES
+    workspace.writeText('dist/components/local/secret.gitignore', 'secret/\n');
+    const fs = require('fs');
+    const origReadFileSync = fs.readFileSync;
+    const secretPath = workspace.path('dist/components/local/secret.gitignore');
+    fs.readFileSync = function(filePath, encoding) {
+      if (filePath === secretPath) {
+        const err = new Error('EACCES: permission denied');
+        err.code = 'EACCES';
+        throw err;
+      }
+      return origReadFileSync.apply(this, arguments);
+    };
+
+    const origDebug = process.env.IGNOREKIT_DEBUG;
+    process.env.IGNOREKIT_DEBUG = '1';
+    const stderrChunks = [];
+    try {
+      const result = runExplainWorkflow(
+        { configPath: workspace.path('ignorekit.json'), distRoot: workspace.path('dist') },
+        {
+          stdout: { write: () => {} },
+          stderr: { write: (text) => stderrChunks.push(String(text)) },
+          cwd: workspace.root
+        }
+      );
+
+      // The component should be skipped, not crash
+      assert.equal(result.project, 'debug-test');
+      assert.ok(!result.components.includes('local/secret'));
+
+      // Debug output must appear in env.stderr, not leak to process.stderr
+      const stderrText = stderrChunks.join('');
+      assert.match(stderrText, /EACCES|permission denied/,
+        `debug output should appear in env.stderr, got: ${stderrText || '(empty)'}`);
+    } finally {
+      process.env.IGNOREKIT_DEBUG = origDebug;
+      fs.readFileSync = origReadFileSync;
+    }
+  } finally {
+    workspace.cleanup();
+  }
+});
