@@ -21,14 +21,18 @@ function formatMatchedComponentsTable(components, { showMissing = false } = {}) 
   let out = '';
   for (const comp of components) {
     const status = comp.classification === 'full' ? '✓ full' : '✗ partial';
-    const matchLabel = `${comp.matched.length}/${comp.total} rules`;
+    const matchLabel = `${comp.positiveMatched ?? comp.matched.length}/${comp.total} rules`;
     let line = `  ${comp.id.padEnd(ID_PAD)} ${matchLabel.padEnd(MATCH_LABEL_PAD)} ${status}`;
     if (showMissing
       && comp.classification === 'partial'
       && Array.isArray(comp.unmatched)
-      && comp.unmatched.length > 0
-      && comp.unmatched.length <= MAX_MISSING_TO_LIST) {
-      line += ` (missing: ${comp.unmatched.join(', ')})`;
+      && comp.unmatched.length > 0) {
+      // Only show positive missing rules — negation patterns (!...) are
+      // structural exemptions, not rules the user should add.
+      const positiveUnmatched = comp.unmatched.filter(line => !line.trim().startsWith('!'));
+      if (positiveUnmatched.length > 0 && positiveUnmatched.length <= MAX_MISSING_TO_LIST) {
+        line += ` (missing: ${positiveUnmatched.join(', ')})`;
+      }
     }
     out += `${line}\n`;
   }
@@ -36,23 +40,23 @@ function formatMatchedComponentsTable(components, { showMissing = false } = {}) 
 }
 
 /**
- * Build the "Already covered by N known component(s)" block as a string.
+ * Build the "Matched N known component(s)" block as a string.
  * Same wording and spacing as writeMatchedComponentsBlock; returns the
  * formatted string so callers can compose it with other output (e.g. a
  * preceding "Analyzing ..." line).
  *
  * @param {object[]} components - Matched components to display
  * @param {object} [opts]
- * @param {string} [opts.label='Already covered by'] - Header prefix
+ * @param {string} [opts.label='Matched'] - Header prefix
  * @returns {string}
  */
-function formatMatchedComponentsHeader(components, { label = 'Already covered by' } = {}) {
+function formatMatchedComponentsHeader(components, { label = 'Matched' } = {}) {
   if (!components || components.length === 0) return '';
   return `${label} ${components.length} known component(s):\n${formatMatchedComponentsTable(components)}\n`;
 }
 
 /**
- * Write the "Already covered by N known component(s)" block (header + table +
+ * Write the "Matched N known component(s)" block (header + table +
  * trailing blank line) to a writable stream. When the list is empty, writes
  * nothing — callers don't have to guard the count themselves.
  *
@@ -62,9 +66,9 @@ function formatMatchedComponentsHeader(components, { label = 'Already covered by
  * @param {object[]} components - Matched components to display
  * @param {object} opts
  * @param {object} opts.stdout - Writable stream (required — every caller passes it explicitly)
- * @param {string} [opts.label='Already covered by'] - Header prefix
+ * @param {string} [opts.label='Matched'] - Header prefix
  */
-function writeMatchedComponentsBlock(components, { stdout, label = 'Already covered by' } = {}) {
+function writeMatchedComponentsBlock(components, { stdout, label = 'Matched' } = {}) {
   if (!components || components.length === 0) return;
   stdout.write(`${label} ${components.length} known component(s):\n`);
   stdout.write(formatMatchedComponentsTable(components));

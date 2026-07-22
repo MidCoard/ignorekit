@@ -33,6 +33,7 @@ function tryRemoveEmptyDir(dirPath) {
  * @returns {boolean}
  */
 function isShippedDefinition(type, id) {
+  assertDefinitionId(id);
   const subDir = type === 'component' ? 'components' : 'presets';
   const ext = type === 'component' ? '.gitignore' : '.json';
   const filePath = path.join(DIST_ROOT, subDir, `${id}${ext}`);
@@ -45,7 +46,7 @@ function isShippedDefinition(type, id) {
  * @param {object} options
  * @param {string} options.id - Component ID (e.g. 'language/kotlin-canceled')
  * @param {string} [options.outputRoot] - Definition root (default: ~/.ignorekit)
- * @param {boolean} [options.yes] - Skip confirmation prompt
+ * @param {boolean} [options.confirm] - Confirm removal without prompt
  * @param {object} env
  * @param {object} env.stdout - Writable stream for output
  * @param {object} [env.stderr] - Writable stream for errors
@@ -76,9 +77,12 @@ async function runComponentRemove(options, env) {
   stdout.write(`Component: ${options.id}\n`);
   stdout.write(`Path: ${filePath}\n`);
 
-  // Confirm
+  // Confirm — guard against non-interactive environments
+  if (!env.confirm && !options.confirm) {
+    throw new Error('Confirmation required. Use --confirm to skip the prompt in non-interactive mode.');
+  }
   if (env.confirm) {
-    const proceed = await env.confirm();
+    const proceed = await env.confirm('Remove this component? [y/N]: ');
     if (!proceed) {
       stdout.write('Cancelled — no file removed.\n');
       return { id: options.id, removed: false, path: null };
@@ -104,7 +108,7 @@ async function runComponentRemove(options, env) {
  * @param {object} options
  * @param {string} options.id - Preset ID (e.g. 'my-custom-preset')
  * @param {string} [options.outputRoot] - Definition root (default: ~/.ignorekit)
- * @param {boolean} [options.yes] - Skip confirmation prompt
+ * @param {boolean} [options.confirm] - Confirm removal without prompt
  * @param {object} env
  * @param {object} env.stdout - Writable stream for output
  * @param {object} [env.stderr] - Writable stream for errors
@@ -135,9 +139,12 @@ async function runPresetRemove(options, env) {
   stdout.write(`Preset: ${options.id}\n`);
   stdout.write(`Path: ${filePath}\n`);
 
-  // Confirm
+  // Confirm — guard against non-interactive environments
+  if (!env.confirm && !options.confirm) {
+    throw new Error('Confirmation required. Use --confirm to skip the prompt in non-interactive mode.');
+  }
   if (env.confirm) {
-    const proceed = await env.confirm();
+    const proceed = await env.confirm('Remove this preset? [y/N]: ');
     if (!proceed) {
       stdout.write('Cancelled — no file removed.\n');
       return { id: options.id, removed: false, path: null };

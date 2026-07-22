@@ -241,6 +241,26 @@ test('matchComponent treats /pattern as equivalent to pattern for matching', () 
     `/nbproject/private/ should match nbproject/private/; got ${result.matched.length} matched`);
 });
 
+test('matchComponent excludes negation patterns from ratio so they do not inflate the total', () => {
+  // Negation patterns (!...) are contextual exemptions, not independent rules.
+  // They are kept in matched/unmatched for coverage tracking but excluded from
+  // the ratio denominator so a component with many negation refinements (e.g.
+  // language/java, editor/vscode) does not have its match ratio deflated by
+  // unmatched negation lines.
+  //
+  // Here the component has one positive rule (bin/) the user matches, plus a
+  // negation rule (!**/src/main/**/bin/) the user does not have. Without the
+  // fix, total would be 2, matched 1, ratio 0.5. With the fix, total is 1,
+  // positiveMatched 1, ratio 1.0 (full). The negation line is still in
+  // unmatched for coverage tracking.
+  const result = matchComponent(['bin/'], 'bin/\n!**/src/main/**/bin/\n');
+  assert.equal(result.matched.length, 1, 'positive rule should match');
+  assert.equal(result.unmatched.length, 1, 'negation rule should be in unmatched for coverage tracking');
+  assert.equal(result.total, 1, 'negation patterns should not count toward total');
+  assert.equal(result.positiveMatched, 1, 'positiveMatched should count only positive matched lines');
+  assert.equal(result.ratio, 1.0, 'ratio should be full when the only positive rule matches');
+});
+
 test('analyze discovers user-layer components', () => {
   const workspace = createTempWorkspace();
   try {
@@ -449,6 +469,17 @@ test('normalizePattern trims whitespace, slashes, and globs so semantically equi
     '.vscode/ and .vscode/* must normalize to the same key');
   assert.equal(normalizePattern('build/*'), 'build',
     'trailing /* on other patterns must be stripped');
+  // Negation patterns: "!/pattern" and "!pattern" are semantically equivalent
+  // for matching — the negation un-ignores the same files regardless of anchoring.
+  // normalizePattern must strip the leading slash after the "!" prefix.
+  assert.equal(normalizePattern('!/foo'), '!foo',
+    'leading slash after ! must be stripped so !/foo matches !foo');
+  assert.equal(normalizePattern('!/foo/'), '!foo',
+    'leading slash and trailing slash after ! must both be stripped');
+  assert.equal(normalizePattern('!foo'), '!foo',
+    'negation without leading slash is unchanged');
+  assert.equal(normalizePattern('!.vscode/*'), '!.vscode',
+    'negation with trailing /* must strip both ! prefix slash and trailing /*');
 });
 
 test('matchComponent matches lines that differ only in leading/trailing whitespace', () => {

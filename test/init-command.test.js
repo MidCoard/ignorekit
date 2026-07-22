@@ -17,12 +17,9 @@ test('init with --preset skips interactive picker', async () => {
       'init',
       workspace.path('project'),
       '--preset',
-      'demo',
-      '--no-git',
-      '--dist-root',
-      workspace.path('dist'),
-      '--yes'
+      'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -46,9 +43,9 @@ test('init --git reports when the target is already a Git repository', async () 
     const output = [];
 
     const result = await runCli([
-      'init', workspace.path('project'), '--preset', 'demo', '--git',
-      '--dist-root', workspace.path('dist')
+      'init', workspace.path('project'), '--preset', 'demo', '--git'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -70,12 +67,9 @@ test('init defaults path to current directory', async () => {
     const result = await runCli([
       'init',
       '--preset',
-      'demo',
-      '--no-git',
-      '--dist-root',
-      workspace.path('dist'),
-      '--yes'
+      'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -101,11 +95,9 @@ test('init refuses to overwrite existing config without --overwrite', async () =
       'init',
       workspace.path('project'),
       '--preset',
-      'demo',
-      '--no-git',
-      '--dist-root',
-      workspace.path('dist')
+      'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: (text) => errors.push(String(text)) },
       cwd: workspace.root
@@ -127,9 +119,9 @@ test('init preserves an existing .gitignore without --overwrite', async () => {
 
     const errors = [];
     const result = await runCli([
-      'init', workspace.path('project'), '--preset', 'demo', '--no-git',
-      '--dist-root', workspace.path('dist')
+      'init', workspace.path('project'), '--preset', 'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: (text) => errors.push(String(text)) },
       cwd: workspace.root
@@ -154,9 +146,9 @@ test('init checks nested Git state before creating managed files', async () => {
 
     const errors = [];
     const result = await runCli([
-      'init', workspace.path('project'), '--preset', 'demo', '--git',
-      '--dist-root', workspace.path('dist')
+      'init', workspace.path('project'), '--preset', 'demo', '--git'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: (text) => errors.push(String(text)) },
       cwd: workspace.root
@@ -182,11 +174,9 @@ test('init --component forwards repeated components into ignorekit.json', async 
 
     const result = await runCli([
       'init', workspace.path('project'), '--preset', 'demo',
-      '--component', 'language/node',
-      '--no-git',
-      '--dist-root', workspace.path('dist'),
-      '--yes'
+      '--component', 'language/node'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -215,9 +205,9 @@ test('init with --git does not write files when nested git check fails', async (
 
     const errors = [];
     const result = await runCli([
-      'init', workspace.path('project'), '--preset', 'demo', '--git',
-      '--dist-root', workspace.path('dist')
+      'init', workspace.path('project'), '--preset', 'demo', '--git'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: (text) => errors.push(String(text)) },
       cwd: workspace.root
@@ -250,16 +240,15 @@ test('init shows preview and asks for confirmation before writing files', async 
     let confirmCalled = false;
     const result = await runCli([
       'init', workspace.path('project'),
-      '--preset', 'demo',
-      '--no-git',
-      '--dist-root', workspace.path('dist')
+      '--preset', 'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root,
       ask: async (prompt) => {
         if (/Pick a preset/.test(prompt)) return 'demo';
-        if (/Proceed|confirm/i.test(prompt)) {
+        if (/Proceed|Write|confirm/i.test(prompt)) {
           confirmCalled = true;
           return 'n';
         }
@@ -279,34 +268,31 @@ test('init shows preview and asks for confirmation before writing files', async 
   }
 });
 
-test('init --yes skips the confirmation prompt and writes files', async () => {
-  // The --yes flag should bypass the confirm gate, just like it does for
-  // adopt and create. Previously --yes was parsed but ignored by init.
+test('init writes files when confirm callback returns true', async () => {
+  // The confirm gate should proceed when the callback returns true,
+  // writing both ignorekit.json and .gitignore.
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
     workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
 
-    let askCalled = false;
     const result = await runCli([
       'init', workspace.path('project'),
-      '--preset', 'demo',
-      '--no-git',
-      '--dist-root', workspace.path('dist'),
-      '--yes'
+      '--preset', 'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root,
-      ask: async () => { askCalled = true; return 'n'; }
+      ask: async () => '',     // answer '' to any ask prompt (default = yes)
+      confirm: async () => true // confirm the write
     });
 
-    assert.equal(result.exitCode, 0, 'init --yes should succeed without confirm');
-    assert.equal(askCalled, false, '--yes should skip the confirm prompt');
+    assert.equal(result.exitCode, 0, 'init should succeed when confirmed');
     assert.equal(fs.existsSync(workspace.path('project/ignorekit.json')), true,
-      'config should be written with --yes');
+      'config should be written when confirmed');
     assert.equal(fs.existsSync(workspace.path('project/.gitignore')), true,
-      '.gitignore should be written with --yes');
+      '.gitignore should be written when confirmed');
   } finally {
     workspace.cleanup();
   }
@@ -320,10 +306,9 @@ test('init confirm=y writes files', async () => {
 
     const result = await runCli([
       'init', workspace.path('project'),
-      '--preset', 'demo',
-      '--no-git',
-      '--dist-root', workspace.path('dist')
+      '--preset', 'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root,

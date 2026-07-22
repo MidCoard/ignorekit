@@ -17,11 +17,9 @@ test('adopt with --preset skips interactive picker', async () => {
       'adopt',
       workspace.path('project'),
       '--preset',
-      'demo',
-      '--dist-root',
-      workspace.path('dist'),
-      '--apply'
+      'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -45,8 +43,9 @@ test('adopt keeps explicit extra components and avoids duplicating selected pres
 
     const result = await runCli([
       'adopt', workspace.path('project'), '--preset', 'java',
-      '--component', 'language/node', '--dist-root', workspace.path('dist'), '--apply'
+      '--component', 'language/node'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -72,11 +71,9 @@ test('adopt defaults path to current directory', async () => {
       'adopt',
       '--preset',
       'demo',
-      '--dist-root',
-      workspace.path('dist'),
-      '--overwrite-config',
-      '--apply'
+      '--overwrite-config'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -102,10 +99,9 @@ test('adopt refuses to overwrite existing config without --overwrite-config', as
       'adopt',
       workspace.path('project'),
       '--preset',
-      'demo',
-      '--dist-root',
-      workspace.path('dist')
+      'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: (text) => errors.push(String(text)) },
       cwd: workspace.root
@@ -139,10 +135,9 @@ test('adopt asks to overwrite config when it exists without --overwrite-config',
       'adopt',
       workspace.path('project'),
       '--preset',
-      'demo',
-      '--dist-root',
-      workspace.path('dist')
+      'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       ask: (prompt) => answers[answerIndex++],
       stdin: { isTTY: true },
       stdout: { write: () => {} },
@@ -174,11 +169,9 @@ test('adopt with --overwrite-config replaces existing config', async () => {
       workspace.path('project'),
       '--preset',
       'demo',
-      '--dist-root',
-      workspace.path('dist'),
-      '--overwrite-config',
-      '--apply'
+      '--overwrite-config'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -192,7 +185,7 @@ test('adopt with --overwrite-config replaces existing config', async () => {
   }
 });
 
-test('adopt --remove-cached dry-run prints file list to stdout', async () => {
+test('adopt --remove-cached --dry-run prints file list to stdout', async () => {
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
@@ -220,6 +213,7 @@ test('adopt --remove-cached dry-run prints file list to stdout', async () => {
         preset: 'demo',
         distRoot: workspace.path('dist'),
         removeCached: true,
+        dryRun: true,
         apply: true
       }, {
         cwd: workspace.root,
@@ -241,7 +235,6 @@ test('adopt --remove-cached dry-run prints file list to stdout', async () => {
 });
 
 test('adopt --remove-cached works without --apply (apply is always implied)', async () => {
-  // --apply is accepted for backward compat but no longer gates the write.
   // Verify that --remove-cached without --apply does NOT produce a "requires
   // --apply" error. The actual --remove-cached behavior (git ls-files) is
   // tested separately with real git repos — here we just confirm the
@@ -254,9 +247,9 @@ test('adopt --remove-cached works without --apply (apply is always implied)', as
 
     const errors = [];
     const result = await runCli([
-      'adopt', workspace.path('project'), '--preset', 'demo',
-      '--dist-root', workspace.path('dist')
+      'adopt', workspace.path('project'), '--preset', 'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: (text) => errors.push(String(text)) },
       cwd: workspace.root
@@ -282,11 +275,9 @@ test('adopt overwrites .gitignore directly without creating a backup', async () 
       'adopt',
       workspace.path('project'),
       '--preset',
-      'demo',
-      '--dist-root',
-      workspace.path('dist'),
-      '--apply'
+      'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -317,10 +308,9 @@ test('adopt does not create .gitignore.preview file', async () => {
       'adopt',
       workspace.path('project'),
       '--preset',
-      'demo',
-      '--dist-root',
-      workspace.path('dist')
+      'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -345,9 +335,9 @@ test('adopt lists a preset component as new when the current .gitignore only par
 
     const writes = [];
     const result = await runCli([
-      'adopt', workspace.path('project'), '--preset', 'p',
-      '--dist-root', workspace.path('dist'), '--generate'
+      'adopt', workspace.path('project'), '--preset', 'p'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: text => writes.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -376,11 +366,9 @@ test('adopt creates .gitignore directly when none existed', async () => {
       'adopt',
       workspace.path('project'),
       '--preset',
-      'demo',
-      '--dist-root',
-      workspace.path('dist'),
-      '--apply'
+      'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -412,8 +400,9 @@ test('adopt preserves the source byte text of custom rules (trailing whitespace,
 
     const result = await runCli([
       'adopt', workspace.path('project'), '--preset', 'empty',
-      '--dist-root', workspace.path('dist'), '--overwrite-config', '--apply'
+      '--overwrite-config'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -433,7 +422,7 @@ test('adopt preserves the source byte text of custom rules (trailing whitespace,
   }
 });
 
-// --- #3 (P0): adopt --yes must skip the post-preview confirm prompt ---
+// --- #3 (P0): adopt always writes after confirm ---
 
 test('adopt deduplicates custom rules that differ only in whitespace (#5)', async () => {
   const workspace = createTempWorkspace();
@@ -447,8 +436,9 @@ test('adopt deduplicates custom rules that differ only in whitespace (#5)', asyn
 
     const result = await runCli([
       'adopt', workspace.path('project'), '--preset', 'empty',
-      '--dist-root', workspace.path('dist'), '--overwrite-config', '--apply'
+      '--overwrite-config'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -480,8 +470,9 @@ test('adopt recognizes covered rules despite whitespace mismatch (#6)', async ()
 
     const result = await runCli([
       'adopt', workspace.path('project'), '--preset', 'demo',
-      '--dist-root', workspace.path('dist'), '--overwrite-config', '--apply'
+      '--overwrite-config'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -500,46 +491,44 @@ test('adopt recognizes covered rules despite whitespace mismatch (#6)', async ()
   }
 });
 
-test('adopt --yes skips the confirmation prompt and writes the file', async () => {
+test('adopt skips the confirmation prompt and writes the file', async () => {
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
     workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
     workspace.writeText('project/.gitignore', 'old-rule\n');
 
-    // A confirm() that always returns false would normally cancel adopt. With
-    // --yes the workflow must bypass confirm and write anyway. We confirm by
-    // wiring a confirm() in env — env.confirm overrides the CLI's confirm
-    // behavior and the buildCreateEnv honors the --yes flag, so the test
-    // asserts that calling adopt WITH --yes succeeds even though our injected
+    // A confirm() that always returns false would normally cancel adopt. The
+    // workflow must bypass confirm and write anyway. We confirm by wiring a
+    // confirm() in env — env.confirm overrides the CLI's confirm behavior,
+    // so the test asserts that calling adopt succeeds even though our injected
     // env-confirm is hostile.
     const output = [];
     const result = await runCli([
-      'adopt', workspace.path('project'), '--preset', 'demo',
-      '--dist-root', workspace.path('dist'), '--yes', '--apply'
+      'adopt', workspace.path('project'), '--preset', 'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: (s) => output.push(String(s)) },
       stderr: { write: () => {} },
       cwd: workspace.root
     });
     assert.equal(result.exitCode, 0,
-      `expected exit 0 with --yes, got ${result.exitCode}; output: ${output.join('')}`);
+      `expected exit 0, got ${result.exitCode}; output: ${output.join('')}`);
     assert.ok(fs.existsSync(workspace.path('project/ignorekit.json')),
-      'config should have been written with --yes');
+      'config should have been written');
     assert.match(output.join(''), /Adopted/, 'should print Adopted summary');
-    // Sanity: the prompt should NOT have been written when --yes is set.
+    // Sanity: the prompt should NOT have been written.
     assert.doesNotMatch(output.join(''), /Proceed\?/,
-      '--yes should not show the Proceed? prompt');
+      'should not show the Proceed? prompt');
   } finally {
     workspace.cleanup();
   }
 });
 
-// --- #2: adopt always writes after confirm (no more --apply dry-run) ---
+// --- #2: adopt always writes after confirm ---
 
-test('adopt writes files with --generate in non-interactive mode', async () => {
-  // Without --generate and without env.ask, adopt skips writing and tells the
-  // user to use --generate or --yes. With --generate, it writes directly.
+test('adopt writes files in non-interactive mode', async () => {
+  // Without env.ask, adopt writes directly in non-interactive mode.
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
@@ -548,18 +537,18 @@ test('adopt writes files with --generate in non-interactive mode', async () => {
 
     const output = [];
     const result = await runCli([
-      'adopt', workspace.path('project'), '--preset', 'demo',
-      '--dist-root', workspace.path('dist'), '--generate'
+      'adopt', workspace.path('project'), '--preset', 'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: (s) => output.push(String(s)) },
       stderr: { write: () => {} },
       cwd: workspace.root
     });
 
     assert.equal(result.exitCode, 0);
-    // Files should be written with --generate
+    // Files should be written
     assert.ok(fs.existsSync(workspace.path('project/ignorekit.json')),
-      'config should be written with --generate');
+      'config should be written');
     // The .gitignore should be updated
     const gitignore = workspace.readText('project/.gitignore');
     assert.match(gitignore, /logs\//);
@@ -594,8 +583,9 @@ test('adopt --exclude prevents excluded component rules from being treated as co
     const result = await runCli([
       'adopt', workspace.path('project'), '--preset', 'generic',
       '--exclude', 'platform/windows',
-      '--dist-root', workspace.path('dist'), '--overwrite-config', '--apply'
+      '--overwrite-config'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -635,8 +625,9 @@ test('adopt carries forward rules from extra components that have zero overlap w
     const result = await runCli([
       'adopt', workspace.path('project'), '--preset', 'demo',
       '--component', 'local/secrets',
-      '--dist-root', workspace.path('dist'), '--overwrite-config', '--apply'
+      '--overwrite-config'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -670,9 +661,9 @@ test('adopt warns when analysis fails and .gitignore exists', async () => {
 
     const errors = [];
     const result = await runCli([
-      'adopt', workspace.path('project'), '--preset', 'demo',
-      '--dist-root', workspace.path('dist'), '--apply'
+      'adopt', workspace.path('project'), '--preset', 'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: (text) => errors.push(String(text)) },
       cwd: workspace.root
@@ -700,9 +691,9 @@ test('adopt degrades gracefully when .gitignore is too large to analyze', async 
 
     const errors = [];
     const result = await runCli([
-      'adopt', workspace.path('project'), '--preset', 'demo',
-      '--dist-root', workspace.path('dist'), '--apply'
+      'adopt', workspace.path('project'), '--preset', 'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: (text) => errors.push(String(text)) },
       cwd: workspace.root
@@ -721,7 +712,7 @@ test('adopt degrades gracefully when .gitignore is too large to analyze', async 
   }
 });
 
-test('adopt with --apply writes config and .gitignore', async () => {
+test('adopt writes config and .gitignore', async () => {
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
@@ -729,9 +720,9 @@ test('adopt with --apply writes config and .gitignore', async () => {
     workspace.writeText('project/.gitignore', 'old-rule\n');
 
     const result = await runCli([
-      'adopt', workspace.path('project'), '--preset', 'demo',
-      '--dist-root', workspace.path('dist'), '--apply'
+      'adopt', workspace.path('project'), '--preset', 'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -739,7 +730,7 @@ test('adopt with --apply writes config and .gitignore', async () => {
 
     assert.equal(result.exitCode, 0);
     assert.ok(fs.existsSync(workspace.path('project/ignorekit.json')),
-      'config must be written with --apply');
+      'config must be written');
     const gitignore = workspace.readText('project/.gitignore');
     assert.match(gitignore, /Generated by ignorekit/);
   } finally {
@@ -764,9 +755,9 @@ test('adopt propagates preset-not-found error from analysis comparison (no silen
 
     const errors = [];
     const result = await runCli([
-      'adopt', workspace.path('project'), '--preset', 'nonexistent',
-      '--dist-root', workspace.path('dist'), '--apply'
+      'adopt', workspace.path('project'), '--preset', 'nonexistent'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: (text) => errors.push(String(text)) },
       cwd: workspace.root
@@ -791,9 +782,9 @@ test('adopt with nonexistent preset errors immediately without writing files', a
 
     const errors = [];
     const result = await runCli([
-      'adopt', workspace.path('project'), '--preset', 'missing-preset',
-      '--dist-root', workspace.path('dist'), '--apply'
+      'adopt', workspace.path('project'), '--preset', 'missing-preset'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: (text) => errors.push(String(text)) },
       cwd: workspace.root
@@ -813,7 +804,7 @@ test('adopt with nonexistent preset errors immediately without writing files', a
 test('adopt validates preset before showing analysis or preview output', async () => {
   // When a nonexistent preset is used with an existing .gitignore, the error
   // must fire BEFORE the analysis output ("Analyzing existing .gitignore",
-  // "Rules needing review") and BEFORE the preview ("--- Preview (.gitignore) ---").
+  // "Custom rules") and BEFORE the preview ("--- Preview (.gitignore) ---").
   // Showing analysis/preview for a preset that will ultimately fail is
   // misleading — the user sees "Preset will add N components" only to learn
   // the preset doesn't exist.
@@ -825,9 +816,9 @@ test('adopt validates preset before showing analysis or preview output', async (
     const stdoutLines = [];
     const errors = [];
     const result = await runCli([
-      'adopt', workspace.path('project'), '--preset', 'nonexistent-preset',
-      '--dist-root', workspace.path('dist')
+      'adopt', workspace.path('project'), '--preset', 'nonexistent-preset'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: text => stdoutLines.push(String(text)) },
       stderr: { write: text => errors.push(String(text)) },
       cwd: workspace.root
@@ -865,9 +856,9 @@ test('adopt with lost components shows interactive picker and adds selected comp
     const answers = ['', 'y', 'n'];  // component picker, confirm, preview
     let answerIndex = 0;
     const result = await runCli([
-      'adopt', workspace.path('project'), '--preset', 'demo',
-      '--dist-root', workspace.path('dist')
+      'adopt', workspace.path('project'), '--preset', 'demo'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: (text) => outputs.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.root,

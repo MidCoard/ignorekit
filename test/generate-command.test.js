@@ -19,7 +19,8 @@ test('generate writes .gitignore from a project config and does not require Git'
       custom: ['/runtime/']
     });
 
-    const result = await runCli(['generate', configPath, '--dist-root', workspace.path('dist')], {
+    const result = await runCli(['generate', configPath], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.path('project')
@@ -44,7 +45,8 @@ test('generate reads user-layer definitions for extra components', async () => {
     });
     workspace.writeText('user/components/local/runtime.gitignore', 'runtime-data/\n');
 
-    const result = await runCli(['generate', configPath, '--dist-root', workspace.path('dist'), '--user-root', workspace.path('user')], {
+    const result = await runCli(['generate', configPath], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist'), IGNOREKIT_USER_ROOT: workspace.path('user') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.path('project')
@@ -57,16 +59,26 @@ test('generate reads user-layer definitions for extra components', async () => {
   }
 });
 
-test('generate requires a config path', async () => {
-  const errors = [];
-  const result = await runCli(['generate'], {
-    stdout: { write: () => {} },
-    stderr: { write: (text) => errors.push(String(text)) },
-    cwd: process.cwd()
-  });
+test('generate with no config path defaults to ./ignorekit.json', async () => {
+  // When no config path is provided, generate reads ./ignorekit.json in the
+  // current working directory. If that file doesn't exist, it errors.
+  const workspace = createTempWorkspace();
+  try {
+    // Use a temp directory that has no ignorekit.json
+    const errors = [];
+    const result = await runCli(['generate'], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
+      stdout: { write: () => {} },
+      stderr: { write: (text) => errors.push(String(text)) },
+      cwd: workspace.path('project')  // no ignorekit.json here
+    });
 
-  assert.equal(result.exitCode, 1);
-  assert.match(errors.join(''), /generate requires a config path/);
+    assert.equal(result.exitCode, 1);
+    // The error should mention the file not existing
+    assert.match(errors.join(''), /ignorekit\.json/);
+  } finally {
+    workspace.cleanup();
+  }
 });
 
 test('generate with invalid config produces error containing file path', async () => {
@@ -93,11 +105,39 @@ test('generate with invalid config produces error containing file path', async (
   }
 });
 
+test('generate with no args reads ./ignorekit.json from cwd', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    workspace.writeJson('project/ignorekit.json', {
+      version: 1,
+      name: 'project',
+      preset: 'demo',
+      provider: { name: 'local' },
+      custom: []
+    });
+
+    // No config path argument — should default to ./ignorekit.json in cwd
+    const result = await runCli(['generate'], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: workspace.path('project')
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.match(workspace.readText('project/.gitignore'), /logs\//);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 // --- #1 (P0): generate must show preview and require confirmation before writing ---
 
 test('generate shows preview before writing and does not write when confirm declines', async () => {
-  // Without --yes, generate must show a preview and ask for confirmation.
-  // When the user declines, no .gitignore should be written.
+  // When a .gitignore already exists, generate asks for confirmation before
+  // overwriting. When the user declines, the existing .gitignore is unchanged.
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
@@ -109,33 +149,38 @@ test('generate shows preview before writing and does not write when confirm decl
       provider: { name: 'local' },
       custom: []
     });
+    // Pre-existing .gitignore — this triggers the overwrite confirmation
+    workspace.writeText('project/.gitignore', 'old-content\n');
+    const originalBytes = fs.readFileSync(workspace.path('project/.gitignore'), 'utf8');
 
     const output = [];
-    // Answer 'y' to "Show preview?" then 'n' to "Proceed?"
+    // Answer 'y' to "Show preview?" then 'n' to "Overwrite?"
     const answers = ['y', 'n'];
     let answerIndex = 0;
-    const result = await runCli(['generate', configPath, '--dist-root', workspace.path('dist')], {
+    const result = await runCli(['generate', configPath], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: (text) => output.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.path('project'),
       ask: async () => answers[answerIndex++]
     });
 
-    assert.equal(result.exitCode, 1, 'generate should exit 1 when user declines confirm');
+    assert.equal(result.exitCode, 1, 'generate should exit 1 when user declines overwrite');
     const out = output.join('');
     assert.match(out, /--- Preview/, 'generate must show preview before writing');
     assert.match(out, /End preview/, 'generate must delimit the preview');
-    // No .gitignore should be written when the user declines
-    assert.equal(fs.existsSync(workspace.path('project/.gitignore')), false,
-      'generate must not write .gitignore when user declines confirm');
+    // Existing .gitignore must be unchanged
+    assert.equal(fs.readFileSync(workspace.path('project/.gitignore'), 'utf8'), originalBytes,
+      'generate must not overwrite .gitignore when user declines');
   } finally {
     workspace.cleanup();
   }
 });
 
-test('generate --yes skips confirmation and writes the file', async () => {
-  // With --yes, generate must bypass the confirm prompt and write directly,
-  // matching the --yes behavior of init and adopt.
+test('generate with --confirm skips overwrite prompt and writes the file', async () => {
+  // With --confirm, generate bypasses the overwrite prompt and writes directly,
+  // even when a .gitignore already exists. Matches the --confirm behavior of
+  // init and adopt.
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
@@ -147,22 +192,23 @@ test('generate --yes skips confirmation and writes the file', async () => {
       provider: { name: 'local' },
       custom: []
     });
+    // Pre-existing .gitignore — would normally trigger overwrite prompt
+    workspace.writeText('project/.gitignore', 'old-content\n');
 
     const output = [];
-    const result = await runCli(['generate', configPath, '--dist-root', workspace.path('dist'), '--yes'], {
+    const result = await runCli(['generate', configPath, '--confirm'], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: (text) => output.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.path('project')
     });
 
-    assert.equal(result.exitCode, 0, 'generate --yes should succeed');
-    // The file must be written
+    assert.equal(result.exitCode, 0, 'generate with --confirm should succeed');
+    // The file must be overwritten
     assert.match(workspace.readText('project/.gitignore'), /logs\//);
-    // With --yes, the preview question is skipped (no interactive prompt)
-    assert.doesNotMatch(output.join(''), /Show preview/);
-    // The confirm prompt must NOT appear
-    assert.doesNotMatch(output.join(''), /Proceed\?/,
-      '--yes should not show the Proceed? prompt');
+    // The overwrite prompt must NOT appear
+    assert.doesNotMatch(output.join(''), /Overwrite/,
+      '--confirm should skip the overwrite prompt');
   } finally {
     workspace.cleanup();
   }
@@ -186,13 +232,14 @@ test('generate under CI skips confirmation and writes the file', async () => {
     const prev = process.env.CI;
     process.env.CI = '1';
     try {
-      const result = await runCli(['generate', configPath, '--dist-root', workspace.path('dist')], {
+      const result = await runCli(['generate', configPath], {
+        envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
         stdout: { write: () => {} },
         stderr: { write: () => {} },
         cwd: workspace.path('project')
       });
 
-      assert.equal(result.exitCode, 0, 'generate under CI should succeed without --yes');
+      assert.equal(result.exitCode, 0, 'generate under CI should succeed without confirm');
       assert.match(workspace.readText('project/.gitignore'), /logs\//);
     } finally {
       if (prev === undefined) delete process.env.CI; else process.env.CI = prev;

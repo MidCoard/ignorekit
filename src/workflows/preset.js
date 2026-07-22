@@ -72,7 +72,7 @@ async function runPresetCreate(options, env) {
   stdout.write(`Output: ${outputPath}\n`);
 
   if (env.confirm) {
-    const proceed = await env.confirm();
+    const proceed = await env.confirm('Write preset file? [Y/n]: ');
     if (!proceed) {
       stdout.write('Cancelled — no file written.\n');
       return { outputPath: null, preset, resolvedComponents: components };

@@ -4,29 +4,13 @@ const { validateProviderConfig } = require('../core/constants');
 
 function buildProjectConfig(name, options) {
   const provider = { name: options.provider || 'local' };
-  const validationErrors = validateProviderConfig(
-    { name: provider.name, templates: options.templates },
-    provider.name
-  );
+  const validationErrors = validateProviderConfig(provider, provider.name);
   if (validationErrors.length > 0) {
-    // The first validation error is thrown with a CLI-oriented message that
-    // mentions the --template flag, since buildProjectConfig is called from
-    // the CLI path. Subsequent errors are suppressed to avoid overwhelming
-    // the user — they'll see the next one after fixing the first.
-    const first = validationErrors[0];
-    if (first.startsWith('provider "') && first.includes('requires non-empty templates')) {
-      throw new Error(`Non-local provider "${provider.name}" requires at least one --template. Pass --template <name> (repeatable) with --provider ${provider.name}.`);
-    }
-    if (first.startsWith('provider "') && first.includes('must contain only strings')) {
-      throw new Error(`Non-local provider "${provider.name}" templates must contain only strings. Pass --template <name> (repeatable) with string values.`);
-    }
-    throw new Error(first);
+    throw new Error(validationErrors[0]);
   }
-  // Set templates on the provider when the caller provided a non-empty array.
-  // validateProviderConfig already ensures that non-local providers have
-  // non-empty templates, so there is no need for a separate
-  // PROVIDERS_REQUIRING_TEMPLATES check here — that would be a redundant
-  // source of truth that must be kept in sync when new providers are added.
+  // Include provider.templates when provided (forward-compatible field —
+  // ignored by the local provider but preserved in the config so the
+  // field isn't lost if a user manually adds it).
   if (Array.isArray(options.templates) && options.templates.length > 0) {
     provider.templates = options.templates;
   }

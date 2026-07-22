@@ -58,7 +58,7 @@ function interpretConfirm(answer) {
  *      tests can exercise prompt paths in any environment.
  *   2. `isInteractive()` — checks `IGNOREKIT_NONINTERACTIVE` / `CI` and
  *      `stdin.isTTY`. False → return null (the workflow handles the no-confirm
- *      case by either using --yes or refusing to proceed).
+ *      case by either skipping the prompt or refusing to proceed).
  *   3. Real TTY — opens readline and asks the user.
  *
  * Note: when a test sets `env.ask` AND `CI=1`, `env.ask` wins. That's the
@@ -76,14 +76,14 @@ function createConfirm(env, { prompt = DEFAULT_PROMPT } = {}) {
   // env.ask short-circuits BEFORE isInteractive() — by design, so a test can
   // drive the prompt under CI without rewriting the prompt logic.
   if (env.ask) {
-    return async () => interpretConfirm(await Promise.resolve(env.ask(prompt)));
+    return async (overridePrompt) => interpretConfirm(await Promise.resolve(env.ask(overridePrompt || prompt)));
   }
 
   if (!isInteractive(env, stdin)) return null;
 
-  return () => new Promise((resolve) => {
+  return (overridePrompt) => new Promise((resolve) => {
     const rl = readline.createInterface({ input: stdin, output: stdout });
-    rl.question(prompt, (answer) => {
+    rl.question(overridePrompt || prompt, (answer) => {
       rl.close();
       resolve(interpretConfirm(answer));
     });
@@ -100,8 +100,6 @@ function createConfirm(env, { prompt = DEFAULT_PROMPT } = {}) {
  * lets the workflow interpret the answer in its own context.
  *
  * @param {object} env - { stdout, stdin, ask }
- * @param {object} [opts]
- * @param {string} [opts.prompt] - Default prompt text (can be overridden per-call)
  * @returns {((prompt?: string) => Promise<string>)|null}
  */
 function createAsk(env) {

@@ -34,7 +34,7 @@ test('remove component deletes the file and returns removed=true', async () => {
     assert.ok(tmp.exists('components/language/test-comp.gitignore'));
 
     const res = await runComponentRemove(
-      { id: 'language/test-comp', outputRoot: tmp.root },
+      { id: 'language/test-comp', outputRoot: tmp.root, confirm: true },
       { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
     );
     assert.equal(res.removed, true);
@@ -53,7 +53,7 @@ test('remove component cleans up empty category directory', async () => {
     assert.ok(tmp.exists('components/lonely/only-one.gitignore'));
 
     await runComponentRemove(
-      { id: 'lonely/only-one', outputRoot: tmp.root },
+      { id: 'lonely/only-one', outputRoot: tmp.root, confirm: true },
       { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
     );
     assert.ok(!tmp.exists('components/lonely'),
@@ -70,7 +70,7 @@ test('remove component does not delete category directory with other files', asy
     tmp.writeText('components/language/test-b.gitignore', '*.b\n');
 
     await runComponentRemove(
-      { id: 'language/test-a', outputRoot: tmp.root },
+      { id: 'language/test-a', outputRoot: tmp.root, confirm: true },
       { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
     );
     assert.ok(!tmp.exists('components/language/test-a.gitignore'),
@@ -105,6 +105,24 @@ test('remove component errors when file not found', async () => {
   );
 });
 
+test('remove component requires confirmation in non-interactive mode', async () => {
+  const tmp = createTempDir();
+  try {
+    tmp.writeText('components/local/guard-test.gitignore', '*.guard\n');
+    await assert.rejects(
+      () => runComponentRemove(
+        { id: 'local/guard-test', outputRoot: tmp.root },
+        { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
+      ),
+      /Confirmation required/
+    );
+    assert.ok(tmp.exists('components/local/guard-test.gitignore'),
+      'file should not be deleted without confirmation');
+  } finally {
+    tmp.cleanup();
+  }
+});
+
 test('remove component with confirm=false does not delete', async () => {
   const tmp = createTempDir();
   try {
@@ -127,16 +145,16 @@ test('remove component with confirm=false does not delete', async () => {
   }
 });
 
-test('remove component with --yes skips confirm and deletes', async () => {
+test('remove component with --confirm skips confirm and deletes', async () => {
   const tmp = createTempDir();
   try {
     tmp.writeText('components/local/skip-confirm.gitignore', '*.skip\n');
 
     // buildCreateEnv with skipConfirm=true omits env.confirm
     const result = await runComponentRemove(
-      { id: 'local/skip-confirm', outputRoot: tmp.root, yes: true },
+      { id: 'local/skip-confirm', outputRoot: tmp.root, confirm: true },
       { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
-      // no env.confirm — simulates --yes
+      // no env.confirm — simulates --confirm
     );
     assert.equal(result.removed, true);
     assert.ok(!tmp.exists('components/local/skip-confirm.gitignore'));
@@ -163,7 +181,7 @@ test('remove preset deletes the file and returns removed=true', async () => {
     tmp.writeText('presets/my-custom.json', '{"name":"my-custom","components":[]}');
 
     const res = await runPresetRemove(
-      { id: 'my-custom', outputRoot: tmp.root },
+      { id: 'my-custom', outputRoot: tmp.root, confirm: true },
       { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
     );
     assert.equal(res.removed, true);
@@ -224,7 +242,7 @@ test('remove command dispatches to component removal', async () => {
     tmp.writeText('components/local/cli-test.gitignore', '*.cli\n');
 
     const result = await runCli(
-      ['remove', 'component', 'local/cli-test', '--output-root', tmp.root, '--yes'],
+      ['remove', 'component', 'local/cli-test', '--output-root', tmp.root, '--confirm'],
       { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
     );
     assert.equal(result.exitCode, 0);
@@ -241,7 +259,7 @@ test('remove command dispatches to preset removal', async () => {
     tmp.writeText('presets/cli-preset.json', '{"name":"cli-preset","components":[]}');
 
     const result = await runCli(
-      ['remove', 'preset', 'cli-preset', '--output-root', tmp.root, '--yes'],
+      ['remove', 'preset', 'cli-preset', '--output-root', tmp.root, '--confirm'],
       { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
     );
     assert.equal(result.exitCode, 0);

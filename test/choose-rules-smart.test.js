@@ -43,9 +43,9 @@ test('chooseRulesSmart falls back to inline rules when analyzeGitignore throws (
     const { runCli } = require('../src/cli');
     const result = await runCli([
       'create', 'component',
-      '--user-root', fakeUserRoot,
       '--output-root', fakeUserRoot
     ], {
+      envVars: { IGNOREKIT_USER_ROOT: fakeUserRoot },
       ask: () => answers.shift(),
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: text => errors.push(String(text)) },
@@ -93,9 +93,9 @@ test('chooseRulesSmart does not print "Analyzing..." header when analysis throws
     const { runCli } = require('../src/cli');
     const result = await runCli([
       'create', 'component',
-      '--user-root', fakeUserRoot,
       '--output-root', fakeUserRoot
     ], {
+      envVars: { IGNOREKIT_USER_ROOT: fakeUserRoot },
       ask: () => answers.shift(),
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: text => errors.push(String(text)) },
@@ -139,10 +139,9 @@ test('chooseRulesSmart pre-deselects duplicate rules that differ only in whitesp
 
     const { runCli } = require('../src/cli');
     const result = await runCli(['create', 'component',
-      '--dist-root', workspace.path('dist'),
-      '--user-root', fakeUserRoot,
       '--output-root', fakeUserRoot
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist'), IGNOREKIT_USER_ROOT: fakeUserRoot },
       ask: () => answers.shift(),
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: () => {} },
@@ -199,9 +198,9 @@ test('chooseRulesSmart rejects oversized source file with EFILETOOLARGE before b
     const { runCli } = require('../src/cli');
     const result = await runCli([
       'create', 'component',
-      '--user-root', fakeUserRoot,
       '--output-root', fakeUserRoot
     ], {
+      envVars: { IGNOREKIT_USER_ROOT: fakeUserRoot },
       ask: () => answers.shift(),
       stdout: { write: () => {} },
       stderr: { write: text => errors.push(String(text)) },

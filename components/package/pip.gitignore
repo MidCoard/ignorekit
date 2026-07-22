@@ -1,5 +1,12 @@
 # pip
 *.egg-info/
-dist/
-build/
+*.egg
 .eggs/
+.installed.cfg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/

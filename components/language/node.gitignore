@@ -3,16 +3,9 @@ node_modules/
 .pnp
 .pnp.js
 
-# Node build and test output
-dist/
-dist-ssr/
-build/
-coverage/
-.nyc_output/
-
-# Node caches and generated metadata
+# Node tooling
 *.tsbuildinfo
-.vite/
-.cache/
-.parcel-cache/
-
+.npm
+.node_repl_history
+*.tgz
+jspm_packages/

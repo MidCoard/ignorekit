@@ -72,7 +72,7 @@ ignorekit list presets        # just presets (shows inheritance chain)
 ```bash
 ignorekit init                                    # interactive: pick preset, use current dir
 ignorekit init ./my-app --preset java-gradle --git
-ignorekit init ./web-app --preset vite --no-git
+ignorekit init ./web-app --preset vite
 ignorekit init ./my-app --preset node --exclude platform/windows
 ```
 

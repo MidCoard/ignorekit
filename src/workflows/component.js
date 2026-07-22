@@ -156,7 +156,7 @@ async function runComponentCreate(options, env) {
   stdout.write(`Output: ${outputPath}\n`);
 
   if (env.confirm) {
-    const proceed = await env.confirm();
+    const proceed = await env.confirm('Write component file? [Y/n]: ');
     if (!proceed) {
       stdout.write('Cancelled — no file written.\n');
       return { id, outputPath: null, rules, analysis, warnings };

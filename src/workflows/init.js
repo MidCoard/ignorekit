@@ -21,7 +21,6 @@ const { extractStreams } = require('../core/env');
  * @param {string} options.projectPath - Directory to initialize
  * @param {string} options.preset - Preset name
  * @param {boolean} [options.git] - Run git init
- * @param {boolean} [options.noGit] - Skip git init
  * @param {boolean} [options.overwrite] - Replace existing ignorekit.json and .gitignore
  * @param {boolean} [options.allowNestedGit] - Allow initializing a nested Git repo
  * @param {string[]} [options.components] - Extra component IDs
@@ -96,7 +95,7 @@ async function runInitWorkflow(options, env) {
   // through buildCreateEnv so --yes skips the confirm, and non-interactive
   // environments (CI, piped stdin) get no confirm callback at all.
   if (env.confirm) {
-    const proceed = await env.confirm();
+    const proceed = await env.confirm('Write ignorekit.json and .gitignore? [Y/n]: ');
     if (!proceed) {
       stdout.write('Cancelled — no files written.\n');
       return { projectPath, configPath: null, git: null };

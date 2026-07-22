@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { parseSignificantLines, normalizePattern } = require('../core/text');
+const { parseSignificantLines, normalizePattern, normalizePatternExpanded } = require('../core/text');
 const { resolvePresetComponents } = require('../definitions/resolver');
 const { buildResolver } = require('../core/resolver-factory');
 const { DIST_ROOT } = require('../core/path');
@@ -16,27 +16,47 @@ const { extractStreams } = require('../core/env');
  * Compute match result for a component against input lines.
  * @param {Iterable<string>} inputLines - Normalized significant lines from the input .gitignore
  * @param {string} componentContent - Raw content of the component
- * @returns {{ matched: string[], unmatched: string[], total: number, ratio: number }}
+ * @returns {{ matched: string[], unmatched: string[], total: number, ratio: number, positiveMatched: number }}
  */
 function matchComponent(inputLines, componentContent) {
   const componentLines = parseSignificantLines(componentContent);
-  // Build a normalized lookup set from input lines
+  // Build a normalized lookup set from input lines, expanding bracket
+  // expressions so that `*.pyc` matches `*.py[cod]`, `Desktop.ini` matches
+  // `[Dd]esktop.ini`, etc. Each input line contributes all its expanded
+  // forms to the set.
   const normalizedInput = new Set();
   for (const line of inputLines) {
-    normalizedInput.add(normalizePattern(line));
+    for (const expanded of normalizePatternExpanded(line)) {
+      normalizedInput.add(expanded);
+    }
   }
   const matched = [];
   const unmatched = [];
   for (const line of componentLines) {
-    if (normalizedInput.has(normalizePattern(line))) {
+    // Check if any expanded form of the component line matches an input line.
+    // This handles both directions: `*.py[cod]` in the component matches
+    // `*.pyc` in the input, and `*.swp` in the input matches `*.sw?` in
+    // the component.
+    const componentExpanded = normalizePatternExpanded(line);
+    const isMatch = componentExpanded.some(form => normalizedInput.has(form));
+    if (isMatch) {
       matched.push(line);
     } else {
       unmatched.push(line);
     }
   }
-  const total = componentLines.length;
-  const ratio = total > 0 ? matched.length / total : 0;
-  return { matched, unmatched, total, ratio };
+  // Negation lines (!...) are structural complements to positive patterns,
+  // not independent rules a user would typically write. Exclude them from
+  // the ratio denominator so that components with negation patterns (e.g.
+  // language/java with 4 negation lines out of 7 total) are not penalized
+  // for lines that inflate the denominator and deflate the match ratio.
+  // The matched/unmatched arrays still contain negation lines so that
+  // coverage tracking and pattern-equivalence checks work correctly.
+  const positiveLines = componentLines.filter(line => !line.trim().startsWith('!'));
+  const positiveMatched = matched.filter(line => !line.trim().startsWith('!'));
+  const total = positiveLines.length;
+  const ratio = total > 0 ? positiveMatched.length / total : 0;
+  return { matched, unmatched, total, ratio, positiveMatched: positiveMatched.length };
 }
 
 const FULL_MATCH_THRESHOLD = 0.8;
@@ -189,7 +209,7 @@ function analyzeGitignore(options, env) {
   const originalLines = options.keepRawLines ? parseSignificantLines(rawContent, { keepRaw: true }).map(p => p.original) : null;
   const totalInputLines = inputLines.length;
 
-  const distRoot = options.distRoot || DIST_ROOT;
+  const distRoot = options.distRoot || process.env.IGNOREKIT_DIST_ROOT || DIST_ROOT;
   const resolver = buildResolver({ options, env, projectDirHint: projectPath });
 
   const matchResult = matchAllComponents(resolver, inputLines, env);
@@ -253,22 +273,30 @@ function matchAllComponents(resolver, inputLines, env) {
     component.classification === 'full' || component.matched.length >= 2
   );
 
-  // Compute matched lines coverage (use normalized patterns for dedup)
+  // Compute matched lines coverage (use expanded normalized patterns for dedup)
   const allMatchedNormalized = new Set();
   for (const comp of matchedComponents) {
     for (const line of comp.matched) {
-      allMatchedNormalized.add(normalizePattern(line));
+      for (const expanded of normalizePatternExpanded(line)) {
+        allMatchedNormalized.add(expanded);
+      }
     }
   }
 
-  // Compute unmatched lines (using normalized comparison)
-  const unmatchedLines = inputLines.filter(line => !allMatchedNormalized.has(normalizePattern(line)));
+  // Compute unmatched lines (using expanded normalized comparison)
+  const unmatchedLines = inputLines.filter(line => {
+    const expanded = normalizePatternExpanded(line);
+    return !expanded.some(form => allMatchedNormalized.has(form));
+  });
 
   // Unmatched lines use ALL matched components (not just displayed ones) so that
   // a rule covered by a hidden low-signal partial is not falsely reported as
   // unmatched. The display filter hides noise from the component table, but a
   // covered rule is covered regardless of whether its component is displayed.
-  const displayedUnmatchedLines = inputLines.filter(line => !allMatchedNormalized.has(normalizePattern(line)));
+  const displayedUnmatchedLines = inputLines.filter(line => {
+    const expanded = normalizePatternExpanded(line);
+    return !expanded.some(form => allMatchedNormalized.has(form));
+  });
 
   const totalMatchedCount = matchedComponents.reduce((sum, c) => sum + c.matched.length, 0);
 
@@ -343,7 +371,7 @@ function runAnalyzeWorkflow(options, env) {
 
   const analysis = analyzeGitignore({
     gitignorePath: path.resolve(cwd, options.gitignorePath),
-    distRoot: options.distRoot || DIST_ROOT,
+    distRoot: options.distRoot || process.env.IGNOREKIT_DIST_ROOT || DIST_ROOT,
     userRoot: options.userRoot,
     workspaceRoot: options.workspaceRoot,
     projectPath: options.projectPath

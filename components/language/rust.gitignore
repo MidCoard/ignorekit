@@ -1,2 +1,6 @@
 # Rust
 target/
+**/*.rs.bk
+rustc-ice-*.txt
+**/mutants.out*/
+cargo-timing-*.html

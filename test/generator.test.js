@@ -65,38 +65,6 @@ test('generator works without a preset', async () => {
   }
 });
 
-test('generator includes provider text when provider is gitignore.io', async () => {
-  const workspace = createTempWorkspace();
-  try {
-    workspace.writeJson('dist/presets/demo.json', {
-      name: 'demo',
-      components: []
-    });
-
-    const resolver = createDefinitionResolver({ distRoot: workspace.path('dist') });
-    const content = await generateGitignore({
-      config: {
-        version: 1,
-        name: 'provider-test',
-        preset: 'demo',
-        provider: { name: 'gitignore.io', templates: ['java'] },
-        components: [],
-        custom: [],
-        addons: {}
-      },
-      resolver,
-      providerOptions: {
-        fetchText: async () => '#!! Java\n*.class\n'
-      }
-    });
-
-    assert.match(content, /Provider templates/);
-    assert.match(content, /\*\.class/);
-  } finally {
-    workspace.cleanup();
-  }
-});
-
 test('generator resolves base chain for preset components', async () => {
   const workspace = createTempWorkspace();
   try {

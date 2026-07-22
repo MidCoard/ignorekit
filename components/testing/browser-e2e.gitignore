@@ -1,5 +1,8 @@
 # Browser E2E test output
 cypress/videos/
 cypress/screenshots/
+cypress/downloads/
 playwright-report/
 test-results/
+blob-report/
+playwright/.cache/

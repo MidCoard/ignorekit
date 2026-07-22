@@ -1,3 +1,4 @@
 # Angular
 .angular/
-dist/
+out-tsc/
+.ng/

@@ -6,4 +6,5 @@ out/
 bin/
 !**/src/main/**/bin/
 !**/src/test/**/bin/
-
+hs_err_pid*
+replay_pid*

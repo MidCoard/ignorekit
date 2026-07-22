@@ -32,7 +32,7 @@ test('create preset refuses to overwrite an existing preset without --overwrite'
     // Create a preset first
     const firstResult = await runCli([
       'create', 'preset', 'existing-preset', '--component', 'language/node',
-      '--yes', '--output-root', workspace.path('defs')
+      '--output-root', workspace.path('defs')
     ], {
       stdout: { write: () => {} },
       stderr: { write: () => {} },
@@ -44,7 +44,7 @@ test('create preset refuses to overwrite an existing preset without --overwrite'
     const errors = [];
     const secondResult = await runCli([
       'create', 'preset', 'existing-preset', '--component', 'language/java',
-      '--yes', '--output-root', workspace.path('defs')
+      '--output-root', workspace.path('defs')
     ], {
       stdout: { write: () => {} },
       stderr: { write: (text) => errors.push(String(text)) },
@@ -69,7 +69,7 @@ test('create preset --overwrite replaces an existing preset', async () => {
     // Create a preset first
     const firstResult = await runCli([
       'create', 'preset', 'replaceable-preset', '--component', 'language/node',
-      '--yes', '--output-root', workspace.path('defs')
+      '--output-root', workspace.path('defs')
     ], {
       stdout: { write: () => {} },
       stderr: { write: () => {} },
@@ -80,7 +80,7 @@ test('create preset --overwrite replaces an existing preset', async () => {
     // Overwrite with --overwrite
     const secondResult = await runCli([
       'create', 'preset', 'replaceable-preset', '--component', 'language/java',
-      '--overwrite', '--yes', '--output-root', workspace.path('defs')
+      '--overwrite', '--output-root', workspace.path('defs')
     ], {
       stdout: { write: () => {} },
       stderr: { write: () => {} },
@@ -103,7 +103,7 @@ test('create component keeps category separate from the component name', async (
     const output = [];
     const result = await runCli([
       'create', 'component', 'runtime', '--category', 'local',
-      '--rule', 'runtime/', '--rule', '*.local', '--yes',
+      '--rule', 'runtime/', '--rule', '*.local',
       '--output-root', workspace.path('defs')
     ], {
       stdout: { write: text => output.push(String(text)) },
@@ -130,7 +130,6 @@ test('create component can select specific rules via --rule', async () => {
       'create', 'component', 'runtime', '--category', 'local',
       '--from', workspace.path('project/.gitignore'),
       '--rule', 'cache/', '--rule', 'private/',
-      '--yes',
       '--output-root', workspace.path('defs')
     ], {
       stdout: { write: () => {} },
@@ -151,7 +150,7 @@ test('create preset is the primary way to create presets', async () => {
   try {
     const result = await runCli([
       'create', 'preset', 'team-vite', '--base', 'vite', '--component', 'language/node',
-      '--component', 'local/runtime', '--yes',
+      '--component', 'local/runtime',
       '--output-root', workspace.path('defs')
     ], {
       stdout: { write: () => {} },
@@ -185,7 +184,8 @@ test('create component without arguments defaults to ./gitignore source and user
     ];
     const output = [];
 
-    const result = await runCli(['create', 'component', '--user-root', fakeUserRoot, '--output-root', fakeUserRoot], {
+    const result = await runCli(['create', 'component', '--output-root', fakeUserRoot], {
+      envVars: { IGNOREKIT_USER_ROOT: fakeUserRoot },
       ask: () => answers.shift(),
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: () => {} },
@@ -222,10 +222,9 @@ test('create preset without arguments selects a base and chosen components, writ
 
     const result = await runCli([
       'create', 'preset',
-      '--dist-root', workspace.path('dist'),
-      '--user-root', fakeUserRoot,
       '--output-root', fakeUserRoot
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist'), IGNOREKIT_USER_ROOT: fakeUserRoot },
       ask: () => answers.shift(),
       stdout: { write: () => {} },
       stderr: { write: () => {} },
@@ -257,11 +256,12 @@ test('interactive component creation consumes piped terminal input across every 
     ].join('\n') + '\n';
 
     const result = childProcess.spawnSync(process.execPath, [
-      cliPath, 'create', 'component', '--user-root', fakeUserRoot, '--output-root', fakeUserRoot
+      cliPath, 'create', 'component', '--output-root', fakeUserRoot
     ], {
       cwd: workspace.root,
       input,
-      encoding: 'utf8'
+      encoding: 'utf8',
+      env: { ...process.env, IGNOREKIT_USER_ROOT: fakeUserRoot }
     });
 
     assert.equal(result.status, 0, result.stderr);
@@ -291,13 +291,12 @@ test('interactive preset creation consumes piped terminal input across every pro
 
     const result = childProcess.spawnSync(process.execPath, [
       cliPath, 'create', 'preset',
-      '--dist-root', workspace.path('dist'),
-      '--user-root', fakeUserRoot,
       '--output-root', fakeUserRoot
     ], {
       cwd: workspace.root,
       input,
-      encoding: 'utf8'
+      encoding: 'utf8',
+      env: { ...process.env, IGNOREKIT_DIST_ROOT: workspace.path('dist'), IGNOREKIT_USER_ROOT: fakeUserRoot }
     });
 
     assert.equal(result.status, 0, result.stderr);
@@ -311,9 +310,9 @@ test('interactive preset creation consumes piped terminal input across every pro
   }
 });
 
-// --- #1: --user-root is a discovery layer, not an output destination ---
+// --- #1: IGNOREKIT_USER_ROOT is a discovery layer, not an output destination ---
 
-test('create component --user-root is used only for discovery, output defaults to USER_ROOT', async () => {
+test('create component with IGNOREKIT_USER_ROOT env uses it for discovery, output defaults to USER_ROOT', async () => {
   const workspace = createTempWorkspace();
   const { USER_ROOT } = require('../src/core/path');
   const expectedPath = path.join(USER_ROOT, 'components', 'local', 'user-root-output-test.gitignore');
@@ -322,8 +321,8 @@ test('create component --user-root is used only for discovery, output defaults t
     workspace.writeText('.gitignore', 'unique-custom-rule-xyz/\n');
     const discoveryRoot = path.join(workspace.root, 'discovery-user');
     fs.mkdirSync(path.join(discoveryRoot, 'components'), { recursive: true });
-    // Interactive path (no name arg) — this is where outputRoot was wrongly
-    // derived from --user-root.
+    // Interactive path (no name arg) — output should still go to real USER_ROOT,
+    // not to the discovery root set via IGNOREKIT_USER_ROOT.
     const answers = [
       'local',                         // category
       'user-root-output-test',         // name
@@ -333,8 +332,9 @@ test('create component --user-root is used only for discovery, output defaults t
     ];
 
     const result = await runCli([
-      'create', 'component', '--user-root', discoveryRoot
+      'create', 'component'
     ], {
+      envVars: { IGNOREKIT_USER_ROOT: discoveryRoot },
       ask: () => answers.shift(),
       stdout: { write: () => {} },
       stderr: { write: () => {} },
@@ -342,10 +342,10 @@ test('create component --user-root is used only for discovery, output defaults t
     });
 
     assert.equal(result.exitCode, 0);
-    // --user-root must NOT be treated as the output destination.
+    // IGNOREKIT_USER_ROOT must NOT be treated as the output destination.
     const wrongPath = path.join(discoveryRoot, 'components', 'local', 'user-root-output-test.gitignore');
     assert.equal(fs.existsSync(wrongPath), false,
-      '--user-root must not be used as the output directory');
+      'IGNOREKIT_USER_ROOT must not be used as the output directory');
 
     // Output defaults to the real USER_ROOT.
     assert.ok(fs.existsSync(expectedPath), `Expected file at ${expectedPath}`);
@@ -380,10 +380,9 @@ MIGRATION.md
     const result = await runCli([
       'create', 'component', 'custom', '--category', 'local',
       '--from', workspace.path('project/.gitignore'),
-      '--yes',
-      '--output-root', workspace.path('defs'),
-      '--dist-root', workspace.path('dist')
+      '--output-root', workspace.path('defs')
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: (text) => output.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -402,7 +401,7 @@ MIGRATION.md
     // Output should mention analysis
     const outputText = output.join('');
     assert.match(outputText, /Analyzing/);
-    assert.match(outputText, /Already covered/);
+    assert.match(outputText, /Matched/);
   } finally {
     workspace.cleanup();
   }
@@ -416,7 +415,6 @@ test('create component --rule skips smart analysis (literal rules)', async () =>
     const result = await runCli([
       'create', 'component', 'runtime', '--category', 'local',
       '--rule', 'logs/', '--rule', '.env',
-      '--yes',
       '--output-root', workspace.path('defs')
     ], {
       stdout: { write: () => {} },
@@ -443,10 +441,9 @@ test('create component --from with all lines covered returns nothing to extract'
     const result = await runCli([
       'create', 'component', 'custom', '--category', 'local',
       '--from', workspace.path('project/.gitignore'),
-      '--yes',
-      '--output-root', workspace.path('defs'),
-      '--dist-root', workspace.path('dist')
+      '--output-root', workspace.path('defs')
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: (text) => output.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -471,7 +468,6 @@ test('create component rejects invalid ids', async () => {
     const result = await runCli([
       'create', 'component', '../escape', '--category', 'local',
       '--from', workspace.path('project/.gitignore'),
-      '--yes',
       '--output-root', workspace.path('defs')
     ], {
       stdout: { write: () => {} },
@@ -497,7 +493,7 @@ test('create component accepts category/name syntax (infers --category)', async 
     const output = [];
     const result = await runCli([
       'create', 'component', 'local/runtime',
-      '--rule', 'runtime/', '--rule', '*.local', '--yes',
+      '--rule', 'runtime/', '--rule', '*.local',
       '--output-root', workspace.path('defs')
     ], {
       stdout: { write: text => output.push(String(text)) },
@@ -523,7 +519,7 @@ test('create component requires --category when name has no slash', async () => 
     const errors = [];
     const result = await runCli([
       'create', 'component', 'runtime',
-      '--rule', 'runtime/', '--yes',
+      '--rule', 'runtime/',
       '--output-root', workspace.path('defs')
     ], {
       stdout: { write: () => {} },
@@ -546,7 +542,7 @@ test('create component category/name syntax allows explicit --category override'
     const result = await runCli([
       'create', 'component', 'local/runtime',
       '--category', 'framework',
-      '--rule', 'runtime/', '--yes',
+      '--rule', 'runtime/',
       '--output-root', workspace.path('defs')
     ], {
       stdout: { write: () => {} },
@@ -575,10 +571,9 @@ test('create component --from defaults to user definitions directory', async () 
     const output = [];
     const result = await runCli([
       'create', 'component', 'test-default', '--category', 'local',
-      '--from', workspace.path('project/.gitignore'),
-      '--yes',
-      '--dist-root', workspace.path('dist')
+      '--from', workspace.path('project/.gitignore')
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: (text) => output.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -603,10 +598,9 @@ test('create component --from with --output-root writes to specified directory',
     const result = await runCli([
       'create', 'component', 'test-override', '--category', 'local',
       '--from', workspace.path('project/.gitignore'),
-      '--yes',
-      '--output-root', workspace.path('custom-output'),
-      '--dist-root', workspace.path('dist')
+      '--output-root', workspace.path('custom-output')
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: (text) => output.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -633,7 +627,6 @@ test('create component shows preview before writing', async () => {
     await runCli([
       'create', 'component', 'preview-test', '--category', 'local',
       '--rule', 'one', '--rule', 'two',
-      '--yes',
       '--output-root', workspace.path('defs')
     ], {
       stdout: { write: (text) => output.push(String(text)) },
@@ -659,7 +652,6 @@ test('create preset shows preview before writing', async () => {
     await runCli([
       'create', 'preset', 'preview-preset',
       '--base', 'node', '--component', 'language/node',
-      '--yes',
       '--output-root', workspace.path('defs')
     ], {
       stdout: { write: (text) => output.push(String(text)) },
@@ -721,24 +713,22 @@ test('create component confirm=y writes the file', async () => {
   }
 });
 
-test('create component --yes skips confirm prompt', async () => {
+test('create component writes when confirm callback returns true', async () => {
   const workspace = createTempWorkspace();
   try {
-    let askCalled = false;
     const result = await runCli([
       'create', 'component', 'yes-skip', '--category', 'local',
       '--rule', 'rule',
-      '--yes',
       '--output-root', workspace.path('defs')
     ], {
-      ask: () => { askCalled = true; return 'n'; },  // should not be called for confirm
+      ask: async () => '',        // default = yes for any ask prompt
+      confirm: async () => true,  // confirm the write
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
     });
 
     assert.equal(result.exitCode, 0);
-    assert.equal(askCalled, false, 'ask() should not be called when --yes is set');
     assert.ok(fs.existsSync(workspace.path('defs/components/local/yes-skip.gitignore')));
   } finally {
     workspace.cleanup();
@@ -763,7 +753,8 @@ test('interactive component toggle lets user deselect individual rules', async (
     ];
     const output = [];
 
-    const result = await runCli(['create', 'component', '--user-root', fakeUserRoot, '--output-root', fakeUserRoot], {
+    const result = await runCli(['create', 'component', '--output-root', fakeUserRoot], {
+      envVars: { IGNOREKIT_USER_ROOT: fakeUserRoot },
       ask: () => answers.shift(),
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: () => {} },
@@ -804,7 +795,8 @@ test('interactive component toggle pre-deselects covered rules', async () => {
     ];
     const output = [];
 
-    const result = await runCli(['create', 'component', '--dist-root', workspace.path('dist'), '--user-root', fakeUserRoot, '--output-root', fakeUserRoot], {
+    const result = await runCli(['create', 'component', '--output-root', fakeUserRoot], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist'), IGNOREKIT_USER_ROOT: fakeUserRoot },
       ask: () => answers.shift(),
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: () => {} },

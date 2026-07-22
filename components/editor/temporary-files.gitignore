@@ -2,10 +2,8 @@
 *.suo
 *.ntvs*
 *.njsproj
-*.sln
 *.sw?
-*.swp
-*.swo
 *~
 .history/
-
+Session.vim
+.netrwhist

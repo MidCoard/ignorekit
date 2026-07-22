@@ -1,6 +1,6 @@
 {
   "name": "ignorekit",
-  "version": "0.9.11",
+  "version": "0.9.18",
   "description": "Build .gitignore files from composable components and presets",
   "keywords": [
     "gitignore",

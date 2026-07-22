@@ -50,6 +50,91 @@ function parseSignificantLines(content, { keepRaw = false } = {}) {
 }
 
 /**
+ * Expand simple bracket expressions in a pattern for matching purposes.
+ *
+ * Git's .gitignore supports bracket expressions like `[abc]` (match one of
+ * a, b, c) and `?` (match any single character). Our pattern matcher
+ * compares normalized strings for equality, so `*.pyc` won't match
+ * `*.py[cod]` even though they're semantically overlapping.
+ *
+ * Rather than implement full glob matching (complex and fragile), we expand
+ * the most common bracket patterns into a set of concrete alternatives.
+ * This allows `normalizePattern('*.pyc')` to produce a form that matches
+ * `normalizePattern('*.py[cod]')`.
+ *
+ * Supported expansions:
+ *   - `[abc]` → produces one normalized form per character
+ *   - `[a-z]` → produces one normalized form per character in range
+ *   - `?`    → skipped (too many expansions; treat as literal)
+ *
+ * Returns an array of all expanded forms. For patterns without brackets,
+ * the array has a single element (the pattern itself).
+ *
+ * @param {string} pattern - A normalized pattern (already trimmed/simplified)
+ * @returns {string[]} - Array of expanded forms
+ */
+function expandBrackets(pattern) {
+  const results = [];
+
+  function expand(prefix, rest) {
+    if (rest.length === 0) {
+      results.push(prefix);
+      return;
+    }
+
+    // Find the next bracket expression [...]
+    const openIdx = rest.indexOf('[');
+    if (openIdx === -1) {
+      results.push(prefix + rest);
+      return;
+    }
+
+    const closeIdx = rest.indexOf(']', openIdx);
+    if (closeIdx === -1 || closeIdx === openIdx + 1) {
+      // Malformed or empty bracket — treat as literal
+      results.push(prefix + rest);
+      return;
+    }
+
+    const before = rest.slice(0, openIdx);
+    const bracketContent = rest.slice(openIdx + 1, closeIdx);
+    const after = rest.slice(closeIdx + 1);
+
+    // Expand the bracket content into individual characters
+    const chars = [];
+    for (let i = 0; i < bracketContent.length; i++) {
+      // Check for range expression like a-z
+      if (i + 2 < bracketContent.length && bracketContent[i + 1] === '-') {
+        const start = bracketContent.charCodeAt(i);
+        const end = bracketContent.charCodeAt(i + 2);
+        if (start <= end && end - start <= 25) {
+          // Limit ranges to 26 chars (a-z, A-Z, 0-9, etc.)
+          for (let c = start; c <= end; c++) {
+            chars.push(String.fromCharCode(c));
+          }
+          i += 2; // skip the range
+          continue;
+        }
+      }
+      chars.push(bracketContent[i]);
+    }
+
+    // Limit total expansions to prevent combinatorial explosion
+    if (chars.length === 0 || (results.length > 0 && results.length * chars.length > 50)) {
+      results.push(prefix + before + rest.slice(openIdx));
+      return;
+    }
+
+    for (const ch of chars) {
+      expand(prefix + before + ch, after);
+    }
+  }
+
+  expand('', pattern);
+  return results.length > 0 ? results : [pattern];
+}
+
+/**
  * Normalize a gitignore pattern for matching purposes.
  *
  * Applies these transformations so semantically equivalent patterns are
@@ -79,11 +164,39 @@ function parseSignificantLines(content, { keepRaw = false } = {}) {
  *    the same files as "dirname/". Stripping "/*" allows ".vscode/" in a
  *    user's .gitignore to match ".vscode/*" in a component definition.
  *
+ * 5. Strip leading slashes after negation prefix — "!/pattern" and
+ *    "!pattern" are semantically equivalent for matching (the negation
+ *    un-ignores the same files regardless of anchoring). Stripping the
+ *    slash after "!" allows "!/foo" in a user's .gitignore to match
+ *    "!foo" in a component definition.
+ *
  * @param {string} line
  * @returns {string}
  */
 function normalizePattern(line) {
-  return line.trim().replace(/^\/+/, '').replace(/\/\*+$/, '').replace(/\/+$/, '');
+  const trimmed = line.trim();
+  const negated = trimmed.startsWith('!');
+  const base = negated ? trimmed.slice(1) : trimmed;
+  const stripped = base.replace(/^\/+/, '').replace(/\/\*+$/, '').replace(/\/+$/, '');
+  return negated ? '!' + stripped : stripped;
 }
 
-module.exports = { normalizeText, parseSignificantLines, normalizePattern };
+/**
+ * Normalize a pattern and expand bracket expressions for matching.
+ *
+ * Returns an array of all concrete forms a pattern can take after bracket
+ * expansion. For `*.py[cod]` this returns `['*.pyc', '*.pyo', '*.pyd']`.
+ * For patterns without brackets, returns a single-element array.
+ *
+ * The matching engine uses this so that `*.pyc` in a user's .gitignore
+ * matches `*.py[cod]` in a component definition.
+ *
+ * @param {string} line
+ * @returns {string[]}
+ */
+function normalizePatternExpanded(line) {
+  const normalized = normalizePattern(line);
+  return expandBrackets(normalized);
+}
+
+module.exports = { normalizeText, parseSignificantLines, normalizePattern, normalizePatternExpanded, expandBrackets };

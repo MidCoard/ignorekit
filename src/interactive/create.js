@@ -3,8 +3,10 @@
 const fs = require('fs');
 const path = require('path');
 const { USER_ROOT, DIST_ROOT } = require('../core/path');
+const { ID_PAD } = require('../workflows/_format');
 const { parseSignificantLines, normalizePattern } = require('../core/text');
 const { buildResolver } = require('../core/resolver-factory');
+const { extractStreams } = require('../core/env');
 const { analyzeGitignore, tryAnalyzeGitignore } = require('../workflows/analyze');
 const { formatMatchedComponentsHeader } = require('../workflows/_format');
 const { debugError } = require('../core/debug');
@@ -190,7 +192,7 @@ async function chooseRulesSmart(state, env) {
   // error to stderr under IGNOREKIT_DEBUG and signal the caller to fall back.
   const analysis = tryAnalyzeGitignore({
     gitignorePath: sourcePath,
-    distRoot: env.distRoot || DIST_ROOT,
+    distRoot: env.distRoot || process.env.IGNOREKIT_DIST_ROOT || DIST_ROOT,
     userRoot: env.userRoot,
     workspaceRoot: env.workspaceRoot,
     // Pass the already-read content so analyzeGitignore doesn't re-read the
@@ -370,6 +372,7 @@ async function promptPresetCreation(options, env) {
  * @returns {Promise<string[]>} Selected component IDs
  */
 async function pickExtraComponents(lostComponents, env) {
+  const { stdout } = extractStreams(env);
   const ids = lostComponents.map(c => c.id);
 
   // Pre-select full matches (safe — all rules already present in .gitignore)
@@ -386,12 +389,12 @@ async function pickExtraComponents(lostComponents, env) {
   }
 
   // Render the numbered list with match status
-  env.stdout.write('\n');
+  stdout.write('\n');
   for (let i = 0; i < lostComponents.length; i++) {
     const comp = lostComponents[i];
     const status = comp.classification === 'full' ? '✓ full' : '✗ partial';
     const selected = comp.classification === 'full' ? ' [x]' : ' [ ]';
-    env.stdout.write(`  ${i + 1}. ${comp.id.padEnd(24)} ${status} (${comp.matched.length}/${comp.total} rules)${selected}\n`);
+    stdout.write(`  ${i + 1}. ${comp.id.padEnd(ID_PAD)} ${status} (${comp.matched.length}/${comp.total} rules)${selected}\n`);
   }
 
   // Build default label (e.g. "1-2" for the first two full matches)
@@ -405,7 +408,7 @@ async function pickExtraComponents(lostComponents, env) {
     const answer = await env.ask(`Select extra components to add (numbers, ranges, all, none) [${defaultLabel}]: `);
     const result = selectItems(ids, answer, defaultItems);
     if (result !== null) return result;
-    env.stdout.write(`Invalid selection. Enter numbers (1-${ids.length}), ranges (1-3), 'all', 'none', or press Enter for defaults.\n`);
+    stdout.write(`Invalid selection. Enter numbers (1-${ids.length}), ranges (1-3), 'all', 'none', or press Enter for defaults.\n`);
   }
 }
 

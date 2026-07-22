@@ -10,7 +10,7 @@ const { buildResolver } = require('../core/resolver-factory');
 const { generateGitignore } = require('../generator');
 const { listTrackedIgnoredFiles, removeCachedFiles } = require('../git');
 const { analyzeGitignore, tryAnalyzeGitignore } = require('./analyze');
-const { normalizePattern, parseSignificantLines } = require('../core/text');
+const { normalizePattern, normalizePatternExpanded, parseSignificantLines } = require('../core/text');
 const { writeMatchedComponentsBlock } = require('./_format');
 const { debugError } = require('../core/debug');
 const { extractStreams } = require('../core/env');
@@ -26,12 +26,10 @@ const { pickExtraComponents } = require('../interactive/create');
  * @param {object} options
  * @param {string} options.projectPath - Path to the existing project directory
  * @param {string} options.preset - Preset name
- * @param {boolean} [options.apply] - Accepted for backward compat; no longer gates the write
  * @param {boolean} [options.overwriteConfig] - Skip the "overwrite config?" question
  * @param {boolean} [options.preview] - Skip the "show preview?" question, show directly
- * @param {boolean} [options.generate] - Skip the "generate .gitignore?" question, write directly
  * @param {boolean} [options.removeCached] - Remove Git-tracked files that should be ignored
- * @param {boolean} [options.yes] - Confirm removal without prompt
+ * @param {boolean} [options.dryRun] - Preview only, don't write or remove files
  * @param {string} [options.distRoot] - Override dist root
  * @param {string} [options.userRoot] - User-level override directory
  * @param {string} [options.workspaceRoot] - Workspace-level definition directory
@@ -46,11 +44,8 @@ async function runAdoptWorkflow(options, env) {
   if (!fs.existsSync(projectPath)) {
     throw new Error(`Project path does not exist: ${projectPath}. Use 'ignorekit init' to create a new project.`);
   }
-  // --apply is accepted for backward compatibility but no longer gates the
-  // write — adopt always writes after the user confirms. The flag is kept in
-  // BOOLEAN_OPTIONS so existing scripts don't break.
 
-  const distRoot = options.distRoot || DIST_ROOT;
+  const distRoot = options.distRoot || process.env.IGNOREKIT_DIST_ROOT || DIST_ROOT;
   const warnings = [];
 
   // Create resolver once — reused throughout
@@ -103,7 +98,7 @@ async function runAdoptWorkflow(options, env) {
       }
 
       if (analysis.displayedUnmatchedLines.length > 0) {
-        stdout.write(`Rules needing review (${analysis.displayedUnmatchedLines.length}):\n`);
+        stdout.write(`Custom rules (${analysis.displayedUnmatchedLines.length}):\n`);
         for (const line of analysis.displayedUnmatchedLines) {
           stdout.write(`  ${line}\n`);
         }
@@ -181,12 +176,17 @@ async function runAdoptWorkflow(options, env) {
     // differences between the component file and the user's .gitignore do
     // not prevent a match. A rule like "logs/" in the component covers
     // "logs/   " in the source .gitignore because they normalize to the
-    // same key.
+    // same key. Bracket expressions are expanded so that `*.py[cod]` in
+    // the component covers `*.pyc` in the user's .gitignore.
     const coveredRules = new Set();
     for (const id of selectedComponentIds) {
       const result = analysis.componentResults.get(id);
       if (result) {
-        for (const line of result.matched) coveredRules.add(normalizePattern(line));
+        for (const line of result.matched) {
+          for (const expanded of normalizePatternExpanded(line)) {
+            coveredRules.add(expanded);
+          }
+        }
       } else {
         // Component has zero overlap with the existing .gitignore (not in
         // componentResults). Its rules are still "covered" by the selection
@@ -195,7 +195,9 @@ async function runAdoptWorkflow(options, env) {
         try {
           const content = resolver.readComponent(id);
           for (const line of parseSignificantLines(content)) {
-            coveredRules.add(normalizePattern(line));
+            for (const expanded of normalizePatternExpanded(line)) {
+              coveredRules.add(expanded);
+            }
           }
         } catch (err) {
           // Component may not exist or be unreadable — skip gracefully.
@@ -216,8 +218,12 @@ async function runAdoptWorkflow(options, env) {
     const customRules = [];
     const sourceLines = analysis.originalLines || analysis.inputLines;
     for (const line of sourceLines) {
+      // Check all expanded forms against coveredRules so that `*.pyc`
+      // is recognized as covered by `*.py[cod]`.
+      const expanded = normalizePatternExpanded(line);
+      const isCovered = expanded.some(form => coveredRules.has(form));
       const key = normalizePattern(line);
-      if (!coveredRules.has(key) && !seen.has(key)) {
+      if (!isCovered && !seen.has(key)) {
         seen.add(key);
         customRules.push(line);
       }
@@ -230,26 +236,16 @@ async function runAdoptWorkflow(options, env) {
   const gitignorePath = path.join(projectPath, '.gitignore');
   const configPath = path.join(projectPath, 'ignorekit.json');
 
-  // Confirm the selection before writing. The confirm gate uses env.confirm
-  // which is provided by buildCreateEnv in the CLI dispatch — --yes skips it,
-  // and non-interactive environments (CI, piped stdin) get no confirm callback.
-  if (env.confirm) {
-    const proceed = await env.confirm();
-    if (!proceed) {
-      stdout.write('Cancelled — no files written.\n');
-      return { projectPath, configPath: null, cachedRemoval: { action: 'skipped', files: [] }, analysis, warnings };
-    }
-  }
-
-  // Overwrite-config: ask instead of error. When --overwrite-config is passed,
-  // the question is skipped (the flag is the explicit answer). When the flag is
-  // NOT passed and a config already exists, ask interactively. In non-interactive
-  // mode (no env.ask), throw the error — CI must use the flag explicitly.
+  // STEP 1: Confirm writing ignorekit.json. When it already exists, the
+  // question is phrased as an overwrite. When --overwrite-config is passed
+  // the question is skipped. In non-interactive mode (no env.ask), an
+  // existing config requires the flag explicitly. Declining the config
+  // aborts the entire operation — both config and .gitignore are skipped.
   if (fs.existsSync(configPath) && !options.overwriteConfig) {
     if (env.ask) {
       const overwrite = await env.ask('Overwrite existing ignorekit.json? [Y/n]: ');
-      if (overwrite.trim().toLowerCase() === 'n') {
-        stdout.write('Cancelled — config not overwritten.\n');
+      if (overwrite && overwrite.trim().toLowerCase() === 'n') {
+        stdout.write('Aborted — no files written.\n');
         return { projectPath, configPath: null, cachedRemoval: { action: 'skipped', files: [] }, analysis, warnings };
       }
     } else {
@@ -257,10 +253,12 @@ async function runAdoptWorkflow(options, env) {
     }
   }
 
-  // Preview: ask instead of auto-showing. When --preview is passed, show the
-  // preview directly (the flag is the explicit answer). When the flag is NOT
-  // passed, ask interactively. In non-interactive mode (no env.ask), skip the
-  // preview entirely — CI doesn't need a preview unless explicitly requested.
+  writeJson(configPath, config);
+  stdout.write(`Wrote ${configPath}\n`);
+
+  // STEP 2: Preview the generated .gitignore. When --preview is passed, show
+  // the preview directly. When the flag is NOT passed, ask interactively. In
+  // non-interactive mode (no env.ask), skip the preview entirely.
   if (options.preview) {
     stdout.write(`\n--- Preview (.gitignore) ---\n`);
     stdout.write(gitignore);
@@ -276,52 +274,37 @@ async function runAdoptWorkflow(options, env) {
     }
   }
 
-  // Generate: ask whether to write the .gitignore. When --generate is passed
-  // (or the legacy --apply flag), skip the question and write directly. When
-  // neither flag is passed, ask interactively. In non-interactive mode (no
-  // env.ask), skip writing — the user can regenerate later with --generate.
-  if (!options.generate && !options.apply) {
-    if (env.ask) {
-      const doGenerate = await env.ask('Generate .gitignore? [Y/n]: ');
-      if (doGenerate.trim().toLowerCase() === 'n') {
-        stdout.write('Skipped — no files written.\n');
-        return { projectPath, configPath: null, cachedRemoval: { action: 'skipped', files: [] }, analysis, warnings };
-      }
-    } else {
-      stdout.write('Skipped — no files written.\n');
-      return { projectPath, configPath: null, cachedRemoval: { action: 'skipped', files: [] }, analysis, warnings };
-    }
+  // STEP 3: Confirm overwriting .gitignore. Only asked when a .gitignore
+  // already exists — a new file is written without asking. This is a separate
+  // question from ignorekit.json so the user may update the config while
+  // keeping their hand-written .gitignore. --confirm skips the prompt.
+  // Non-interactive mode (no env.confirm) proceeds without asking.
+  let writeGitignore = true;
+  if (fs.existsSync(gitignorePath) && env.confirm && !options.confirm) {
+    const proceed = await env.confirm('Overwrite existing .gitignore? [Y/n]: ');
+    if (!proceed) writeGitignore = false;
   }
 
-  writeJson(configPath, config);
-  // Non-atomic write: a crash between these two writes could leave an
-  // ignorekit.json pointing to an unwritten .gitignore. This is acceptable
-  // because re-running adopt restores the correct state. An atomic
-  // write-to-temp-then-rename would add filesystem-specific complexity
-  // (Windows doesn't support rename over an existing file) for a scenario
-  // that is both rare and recoverable.
-  fs.writeFileSync(gitignorePath, gitignore, 'utf8');
+  if (writeGitignore) {
+    fs.writeFileSync(gitignorePath, gitignore, 'utf8');
+    stdout.write(`Generated .gitignore at ${gitignorePath}\n`);
+  } else {
+    stdout.write('Skipped .gitignore.\n');
+  }
 
-  stdout.write(`Generated .gitignore at ${gitignorePath}\n`);
-
-  // Handle cached file removal
+  // Handle cached file removal. --remove-cached is an explicit opt-in, so it
+  // removes for real. Combine with --dry-run to preview without removing.
   let cachedRemoval = { action: 'skipped', files: [] };
   if (options.removeCached) {
     const files = listTrackedIgnoredFiles(projectPath);
-    // --yes combined with --remove-cached upgrades the removal from dry-run to
-    // live. This is intentional (--yes means "skip all prompts"), but the
-    // upgrade from "show what would be removed" to "actually remove" is
-    // significant enough to warrant an explicit notice so the user isn't
-    // surprised by files disappearing from the Git index.
-    if (options.yes && files.length > 0) {
-      stdout.write(`Removing ${files.length} file(s) from Git index (--yes confirms live removal)\n`);
-    }
-    cachedRemoval = removeCachedFiles(projectPath, files, { dryRun: !options.yes });
+    cachedRemoval = removeCachedFiles(projectPath, files, { dryRun: options.dryRun });
     if (cachedRemoval.action === 'dry-run' && cachedRemoval.files.length > 0) {
       stdout.write('Files that would be removed from Git index:\n');
       for (const file of cachedRemoval.files) {
         stdout.write(`  ${file}\n`);
       }
+    } else if (cachedRemoval.action === 'removed') {
+      stdout.write(`Removed ${cachedRemoval.files.length} file(s) from Git index\n`);
     }
   }
 

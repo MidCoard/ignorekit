@@ -47,7 +47,6 @@ test('help <command> prints detailed help', async () => {
   const output = writes.join('');
   assert.match(output, /--preset/);
   assert.match(output, /--git/);
-  assert.match(output, /--no-git/);
 });
 
 test('help create describes interactive component and preset creation', async () => {
@@ -105,7 +104,8 @@ test('list does not crash with ReferenceError when a preset has a broken base ch
 
     const errors = [];
     const writes = [];
-    const result = await runCli(['list', '--dist-root', workspace.path('dist')], {
+    const result = await runCli(['list'], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: (text) => writes.push(String(text)) },
       stderr: { write: (text) => errors.push(String(text)) },
       cwd: workspace.root
@@ -125,7 +125,8 @@ test('list shows components and presets', async () => {
   const workspace = createListFixture();
   try {
     const writes = [];
-    const result = await runCli(['list', '--dist-root', workspace.path('dist')], {
+    const result = await runCli(['list'], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: (text) => writes.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -146,7 +147,8 @@ test('list components shows only components', async () => {
   const workspace = createListFixture();
   try {
     const writes = [];
-    const result = await runCli(['list', 'components', '--dist-root', workspace.path('dist')], {
+    const result = await runCli(['list', 'components'], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: (text) => writes.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -168,9 +170,8 @@ test('list includes configured user definitions', async () => {
     workspace.writeJson('user/presets/personal.json', { name: 'personal', components: [] });
 
     const writes = [];
-    const result = await runCli([
-      'list', '--dist-root', workspace.path('dist'), '--user-root', workspace.path('user')
-    ], {
+    const result = await runCli(['list'], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist'), IGNOREKIT_USER_ROOT: workspace.path('user') },
       stdout: { write: (text) => writes.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -199,7 +200,7 @@ test('list rejects unknown targets', async () => {
 
 // --- User layer default (dist CLI UX) ---
 
-test('list surfaces personal definitions from USER_ROOT when no --user-root is passed', async () => {
+test('list surfaces personal definitions from USER_ROOT when IGNOREKIT_USER_ROOT is not set', async () => {
   const workspace = createListFixture();
   const { USER_ROOT } = require('../src/core/path');
   const componentId = `local/cli-default-${process.pid}`;
@@ -209,7 +210,8 @@ test('list surfaces personal definitions from USER_ROOT when no --user-root is p
     fs.writeFileSync(componentPath, 'personal/\n', 'utf8');
 
     const writes = [];
-    const result = await runCli(['list', 'components', '--dist-root', workspace.path('dist')], {
+    const result = await runCli(['list', 'components'], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: (text) => writes.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -261,10 +263,11 @@ test('parseArgs supports --key=value syntax for value options', () => {
   assert.equal(options.outputRoot, 'somewhere');
 });
 
-test('parseArgs supports mixed --key value and --key=value forms', () => {
-  const options = parseArgs(['--preset', 'java', '--dist-root=here']);
-  assert.equal(options.preset, 'java');
-  assert.equal(options.distRoot, 'here');
+test('parseArgs rejects --dist-root=here as a removed option', () => {
+  assert.throws(
+    () => parseArgs(['--preset', 'java', '--dist-root=here']),
+    /Option --dist-root is no longer supported. Use the IGNOREKIT_DIST_ROOT environment variable instead./
+  );
 });
 
 test('parseArgs still recognises space-separated values', () => {
@@ -450,11 +453,9 @@ test('init --component=foo --component=bar collects both as repeated values', as
       'init', workspace.path('project'),
       '--preset', 'generic',
       '--component=language/node',
-      '--component=framework/vite',
-      '--no-git',
-      '--dist-root', workspace.path('dist'),
-      '--yes'
+      '--component=framework/vite'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -482,10 +483,9 @@ test('adopt --component=foo --component=bar collects both as repeated values', a
       'adopt', workspace.path('project'),
       '--preset', 'empty',
       '--component=language/node',
-      '--component=framework/vite',
-      '--dist-root', workspace.path('dist'),
-      '--apply'
+      '--component=framework/vite'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -508,10 +508,9 @@ test('create preset --component=foo --component=bar collects both as repeated va
       '--base', 'vite',
       '--component=language/node',
       '--component=framework/vite',
-      '--yes',
-      '--output-root', workspace.path('defs'),
-      '--dist-root', workspace.path('dist')
+      '--output-root', workspace.path('defs')
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -535,11 +534,9 @@ test('init --exclude=foo --exclude=bar collects both as repeated values', async 
       'init', workspace.path('project'),
       '--preset', 'generic',
       '--exclude=platform/macos',
-      '--exclude=platform/windows',
-      '--no-git',
-      '--dist-root', workspace.path('dist'),
-      '--yes'
+      '--exclude=platform/windows'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root
@@ -554,10 +551,10 @@ test('init --exclude=foo --exclude=bar collects both as repeated values', async 
 
 // --- #13: parseArgs boolean validation rejects inline values + empty key ---
 
-test('parseArgs rejects --yes=false inline value on a boolean flag', () => {
+test('parseArgs rejects removed flag --yes=false', () => {
   assert.throws(
     () => parseArgs(['--yes=false']),
-    /--yes=false does not take a value/
+    /Option --yes is no longer supported/
   );
 });
 
@@ -575,9 +572,11 @@ test('parseArgs rejects --=value with empty key', () => {
   );
 });
 
-test('parseArgs still accepts --yes without a value', () => {
-  const options = parseArgs(['--yes']);
-  assert.equal(options.yes, true);
+test('parseArgs rejects removed flag --yes', () => {
+  assert.throws(
+    () => parseArgs(['--yes']),
+    /Option --yes is no longer supported/
+  );
 });
 
 test('parseArgs accepts a value with spaces after --key=', () => {
@@ -589,7 +588,7 @@ test('parseArgs accepts a value with spaces after --key=', () => {
 
 // --- #14: applyUserRootDefault must record explicit user intent ---
 
-test('applyUserRootDefault marks _userRootExplicit=true when --user-root was passed', () => {
+test('applyUserRootDefault marks _userRootExplicit=true when options.userRoot is set', () => {
   const { applyUserRootDefault } = require('../src/core/resolver-factory');
   const options = { userRoot: '/some/where' };
   applyUserRootDefault(options);
@@ -597,7 +596,7 @@ test('applyUserRootDefault marks _userRootExplicit=true when --user-root was pas
   assert.equal(options._userRootExplicit, true);
 });
 
-test('applyUserRootDefault marks _userRootExplicit=false when --user-root was omitted', () => {
+test('applyUserRootDefault marks _userRootExplicit=false when options.userRoot is not set', () => {
   const { applyUserRootDefault } = require('../src/core/resolver-factory');
   const options = {};
   applyUserRootDefault(options);
@@ -606,8 +605,8 @@ test('applyUserRootDefault marks _userRootExplicit=false when --user-root was om
   assert.equal(options._userRootExplicit, false);
 });
 
-test('create component without --user-root does not emit the discovery-source warning', async () => {
-  // Without an explicit --user-root the warning must NOT fire — only the
+test('create component without explicit IGNOREKIT_USER_ROOT does not emit the discovery-source warning', async () => {
+  // Without an explicit user root the warning must NOT fire — only the
   // default user definitions layer is in use and the user did not opt into a
   // team-shared discovery directory.
   const workspace = createTempWorkspace();
@@ -618,10 +617,9 @@ test('create component without --user-root does not emit the discovery-source wa
       'create', 'component', 'explicit-flag-test',
       '--category', 'local',
       '--from', workspace.path('.gitignore'),
-      '--yes',
-      '--output-root', workspace.path('defs'),
-      '--dist-root', workspace.path('dist')
+      '--output-root', workspace.path('defs')
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: text => writes.push(String(text)) },
       cwd: workspace.root
@@ -630,7 +628,7 @@ test('create component without --user-root does not emit the discovery-source wa
     assert.equal(
       writes.join('').match(/--user-root is a discovery source/g),
       null,
-      'discovery-source warning should not fire without explicit --user-root'
+      'discovery-source warning should not fire without explicit user root'
     );
   } finally {
     workspace.cleanup();
@@ -839,11 +837,9 @@ test('init --preset-less under IGNOREKIT_NONINTERACTIVE prints stderr guidance a
     const errors = [];
     try {
       const result = await runCli([
-        'init', workspace.path('project'),
-        '--no-git',
-        '--dist-root', workspace.path('dist'),
-        '--yes'
+        'init', workspace.path('project')
       ], {
+        envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
         stdout: { write: () => {} },
         stderr: { write: text => errors.push(String(text)) },
         stdin: { isTTY: false },
@@ -949,11 +945,9 @@ test('init without --preset passes env.ask through to pickPresetInteractive', as
     const answers = ['alpha', 'n']; // preset picker, then "Show preview?" → no
     let answerIndex = 0;
     const result = await runCli([
-      'init', workspace.path('project'),
-      '--no-git',
-      '--dist-root', workspace.path('dist'),
-      '--yes'
+      'init', workspace.path('project')
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root,
@@ -984,10 +978,9 @@ test('adopt without --preset passes env.ask through to pickPresetInteractive', a
     // Return 'alpha' for the picker, 'y' for preview, 'y' for the confirm.
     const answers = ['alpha', 'y', 'y'];
     const result = await runCli([
-      'adopt', workspace.path('project'),
-      '--dist-root', workspace.path('dist'),
-      '--apply'
+      'adopt', workspace.path('project')
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: () => {} },
       stderr: { write: () => {} },
       cwd: workspace.root,
@@ -1027,11 +1020,9 @@ test('init without --preset passes env.cwd to pickPresetInteractive for .gitigno
     const output = [];
     const result = await runCli([
       'init', 'project',
-      '--no-git',
-      '--dist-root', workspace.path('dist'),
-      '--overwrite',
-      '--yes'
+      '--overwrite'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.root,
@@ -1060,10 +1051,9 @@ test('adopt without --preset passes env.cwd to pickPresetInteractive for .gitign
     const output = [];
     const answers = ['demo', 'y', 'y'];
     const result = await runCli([
-      'adopt', 'project',
-      '--dist-root', workspace.path('dist'),
-      '--apply'
+      'adopt', 'project'
     ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdout: { write: text => output.push(String(text)) },
       stderr: { write: () => {} },
       cwd: workspace.root,
@@ -1098,9 +1088,9 @@ test('create component interactive flow routes stderr through env.stderr', async
 
     const result = await runCli([
       'create', 'component',
-      '--user-root', fakeUserRoot,
       '--output-root', fakeUserRoot
     ], {
+      envVars: { IGNOREKIT_USER_ROOT: fakeUserRoot },
       ask: () => answers.shift(),
       stdout: { write: () => {} },
       stderr: { write: text => stderrWrites.push(String(text)) },
@@ -1148,9 +1138,9 @@ test('create component interactive flow passes stderr to chooseRulesSmart', asyn
 
     const result = await runCli([
       'create', 'component',
-      '--user-root', fakeUserRoot,
       '--output-root', fakeUserRoot
     ], {
+      envVars: { IGNOREKIT_USER_ROOT: fakeUserRoot },
       ask: () => answers.shift(),
       stdout: { write: () => {} },
       stderr: { write: text => stderrWrites.push(String(text)) },
@@ -1192,11 +1182,9 @@ test('create component interactive flow passes env.ask to runWithQuestions', asy
 
     const result = await runCli([
       'create', 'component',
-      '--user-root', fakeUserRoot,
-      '--output-root', fakeUserRoot,
-      '--dist-root', workspace.path('dist'),
-      '--yes'
+      '--output-root', fakeUserRoot
     ], {
+      envVars: { IGNOREKIT_USER_ROOT: fakeUserRoot, IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       ask: async (prompt) => {
         askCalled = true;
         return answers.shift() || '';
@@ -1232,11 +1220,9 @@ test('create preset interactive flow passes env.ask to runWithQuestions', async 
 
     const result = await runCli([
       'create', 'preset',
-      '--user-root', fakeUserRoot,
-      '--output-root', fakeUserRoot,
-      '--dist-root', workspace.path('dist'),
-      '--yes'
+      '--output-root', fakeUserRoot
     ], {
+      envVars: { IGNOREKIT_USER_ROOT: fakeUserRoot, IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       ask: async (prompt) => {
         askCalled = true;
         return answers.shift() || '';
@@ -1282,10 +1268,9 @@ test('create component interactive flow uses constructed env stdin for runWithQu
 
     const result = await runCli([
       'create', 'component',
-      '--user-root', fakeUserRoot,
-      '--output-root', fakeUserRoot,
-      '--dist-root', workspace.path('dist')
+      '--output-root', fakeUserRoot
     ], {
+      envVars: { IGNOREKIT_USER_ROOT: fakeUserRoot, IGNOREKIT_DIST_ROOT: workspace.path('dist') },
       stdin,
       stdout: { write: () => {} },
       stderr: { write: () => {} },

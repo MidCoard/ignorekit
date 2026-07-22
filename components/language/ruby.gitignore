@@ -1,12 +1,12 @@
 # Ruby
 *.gem
 *.rbc
-/.config
-/coverage/
-/InstalledFiles
+*.bundle
+/.bundle/
+/vendor/bundle/
+/.yardoc/
 /pkg/
 /spec/reports/
 /spec/examples.txt
-/test/tmp/
-/test/version_tmp/
-/tmp/
+.ruby-version
+.rvmrc
