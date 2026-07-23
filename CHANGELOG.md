@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Define shipped components as public-repository-safe defaults: ignore complete JetBrains, VS Code, Claude, Codex, and Gemini workspace directories instead of publishing tool configuration implicitly.
+
+## [0.9.22] - 2026-07-24
+
 ### Added
 - `ignorekit search <pattern>` — find components containing a rule pattern (case-insensitive substring match). E.g. `ignorekit search .DS_Store` shows `platform/macos`, `ignorekit search .env` shows `local/env-secrets`.
-- Define shipped components as public-repository-safe defaults: ignore complete JetBrains, VS Code, Claude, Codex, and Gemini workspace directories instead of publishing tool configuration implicitly.
 
 ## [0.9.18] - 2026-07-23
 
