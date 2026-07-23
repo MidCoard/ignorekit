@@ -8,8 +8,9 @@ A cross-platform CLI tool for building `.gitignore` files from composable compon
 npm install -g ignorekit
 
 ignorekit init ./my-project --preset node --git   # new project
-ignorekit adopt --preset vite              # existing project
-ignorekit generate ./ignorekit.json                # rebuild .gitignore
+ignorekit adopt --preset vite                      # existing project
+ignorekit generate                                 # rebuild .gitignore
+ignorekit search .env                              # find which component covers a rule
 ```
 
 ## How it works
@@ -59,14 +60,6 @@ Presets are **starting points**, not cages. You can always add extra components 
 
 ## Commands
 
-### `list` — Browse what's available
-
-```bash
-ignorekit list                # all components and presets
-ignorekit list components     # just components
-ignorekit list presets        # just presets (shows inheritance chain)
-```
-
 ### `init` — Start a new project
 
 ```bash
@@ -77,10 +70,7 @@ ignorekit init ./my-app --preset node --exclude platform/windows
 ignorekit init ./my-app --preset node --dry-run
 ```
 
-If `--preset` is omitted, an interactive picker shows all presets with the best
-match suggested. The picker also offers two quick options: `generic` (safe
-default for any project) and `blank` (no components). When there's no suggestion
-from analysis, pressing Enter selects `generic`.
+If `--preset` is omitted, an interactive picker shows all presets with the best match suggested. The picker also offers two quick options: `generic` (safe default for any project) and `blank` (no components). When there's no suggestion from analysis, pressing Enter selects `generic`.
 
 ### `adopt` — Bring an existing project into ignorekit
 
@@ -89,26 +79,26 @@ ignorekit adopt                                   # fully interactive
 ignorekit adopt --preset java-gradle              # interactive with preset chosen
 ignorekit adopt --preset node --exclude platform/windows
 ignorekit adopt --preset java-gradle --component language/node  # mixed project
-ignorekit adopt --preset java-gradle --confirm    # overwrite an existing .gitignore without asking
-ignorekit adopt --preset generic --dry-run         # preview both files without writing
+ignorekit adopt --preset java-gradle --confirm    # overwrite .gitignore without asking
+ignorekit adopt --preset generic --dry-run         # preview without writing
 ```
 
 Adopt analyzes your existing `.gitignore`, shows strong component matches, carries over only rules not covered by your chosen preset or extra components, and writes `.gitignore` and `ignorekit.json` after you confirm.
 
-**Interactive flow:** analyze, pick a preset, choose extra components, review the config and preview, then confirm any existing files before writing.
+**Interactive flow:** analyze → pick preset → pick extra components → review custom rules → (overwrite config?) → (preview?) → (overwrite .gitignore?) → write.
 
-**Flags:** `--overwrite-config` replaces an existing config, `--preview` shows the generated `.gitignore` directly, `--confirm` skips the existing `.gitignore` overwrite prompt, and `--dry-run` previews both outputs without writing files or changing Git's index.
-
-Use repeatable `--component <id>` options for mixed projects; the selected components are saved in `ignorekit.json`.
+**Flags:** `--overwrite-config` replaces an existing config, `--preview` shows the generated `.gitignore` directly, `--confirm` skips the overwrite prompt, `--remove-cached` removes newly-ignored files from Git's index, and `--dry-run` previews both outputs without writing files.
 
 ### `generate` — Build .gitignore from config
 
 ```bash
+ignorekit generate                                # reads ./ignorekit.json
 ignorekit generate ./ignorekit.json
 ignorekit generate ./ignorekit.json --output ./path/.gitignore
+ignorekit generate --confirm --remove-cached      # CI-friendly
 ```
 
-`generate` only writes the output file by default. `--remove-cached` is an explicit opt-in to remove already-tracked ignored files from Git's index. `--dry-run` previews the generated file and makes no file or Git-index changes.
+`generate` only writes the output file by default. When a `.gitignore` already exists, it asks for confirmation before overwriting — pass `--confirm` to skip the prompt (useful in CI). `--remove-cached` is an explicit opt-in to remove already-tracked ignored files from Git's index. `--dry-run` previews the generated file without writing.
 
 ### `explain` — Understand your config
 
@@ -128,6 +118,25 @@ ignorekit analyze ./.gitignore --suggest-preset
 
 Matches lines against known components, shows coverage, identifies custom rules, and suggests the best preset. Standard project manifests such as `package.json`, `build.gradle`, and `pom.xml` improve suggestions without changing extracted rules.
 
+### `search` — Find components by rule pattern
+
+```bash
+ignorekit search .DS_Store
+ignorekit search "*.log"
+ignorekit search node_modules
+ignorekit search .env
+```
+
+Searches all component rules for the given pattern (case-insensitive substring match). Useful for finding which component covers a specific rule, or discovering components you may want to add to your project.
+
+### `list` — Browse what's available
+
+```bash
+ignorekit list                # all components and presets
+ignorekit list components     # just components
+ignorekit list presets        # just presets (shows inheritance chain)
+```
+
 ### `create` — Create reusable definitions
 
 ```bash
@@ -140,26 +149,13 @@ ignorekit create preset                                          # guided base a
 ignorekit create preset team-vite --base vite --component local/runtime
 ```
 
-Components use a separate category and name; `runtime` with category `local`
-is stored as `components/local/runtime.gitignore`. The positional name can
-include a category prefix using slash syntax: `local/runtime` is equivalent
-to `--category local --name runtime`. Guided creation lists every
-candidate rule or component, lets you choose a subset, then shows the final
-output path before it writes anything.
+Components use a separate category and name; `runtime` with category `local` is stored as `components/local/runtime.gitignore`. The positional name can include a category prefix using slash syntax: `local/runtime` is equivalent to `--category local --name runtime`. Guided creation lists every candidate rule or component, lets you choose a subset, then shows the final output path before it writes anything.
 
-Pass `--workspace-root <path>` to create definitions in a team-shared root
-when `--output-root` is omitted. `--dry-run` shows the planned target and
-content without creating a definition.
+Pass `--workspace-root <path>` to create definitions in a team-shared root when `--output-root` is omitted. `--dry-run` shows the planned target and content without creating a definition.
 
-**Smart extraction** is automatic when `--from <path>` is used: the source
-.gitignore is analyzed against known components and only the *unmatched* (custom)
-rules are extracted. To write literal rules, pass `--rule <pattern>` instead
-(skipping analysis). This is useful for extracting project-specific rules from
-an existing `.gitignore` while skipping rules already covered by known components.
+**Smart extraction** is automatic when `--from <path>` is used: the source .gitignore is analyzed against known components and only the *unmatched* (custom) rules are extracted. To write literal rules, pass `--rule <pattern>` instead (skipping analysis).
 
-**Interactive rule selection** (no `--rule`): when a source is provided
-interactively, you see every rule with `[x]` / `[ ]` markers (covered rules
-pre-deselected), and you can toggle individual rules:
+**Interactive rule selection** (no `--rule`): when a source is provided interactively, you see every rule with `[x]` / `[ ]` markers (covered rules pre-deselected), and you can toggle individual rules:
 
 ```
 Rules (5, 3 selected):
@@ -171,11 +167,17 @@ Rules (5, 3 selected):
 Toggle rules (e.g. 3, 1-3, all, none) [done]: 
 ```
 
-Type a number to toggle, `1-3` to toggle a range, `all` / `none`, or `done` to
-confirm.
+Type a number to toggle, `1-3` to toggle a range, `all` / `none`, or `done` to confirm.
 
-**Confirmation prompt**: before writing any file, both `create component` and
-`create preset` show a preview and ask `Proceed? [Y/n]`. In non-interactive environments the confirmation prompt is skipped.
+### `remove` — Remove a user-defined component or preset
+
+```bash
+ignorekit remove component local/my-comp --confirm
+ignorekit remove preset my-preset --confirm
+ignorekit remove component local/my-comp --dry-run
+```
+
+Only user-layer and workspace-layer definitions can be removed. Shipped (dist-layer) definitions cannot be deleted. `--confirm` skips the removal prompt (required in non-interactive mode). `--dry-run` previews the target without deleting.
 
 ## Project config
 
@@ -200,19 +202,17 @@ Projects use `ignorekit.json`:
 - `exclude` — components from the preset chain to omit (e.g., `platform/windows` on a Windows-only team)
 - `custom` — project-specific patterns (always the last section in the generated file)
 
-## Reusable definitions
+## 3-layer definition system
 
-`ignorekit create component` and `ignorekit create preset` save reusable definitions to
-`~/.ignorekit` by default. They are picked up automatically by every command,
-so a new `local/runtime` component or `team-stack` preset can be used straight
-away without extra flags.
+Definitions live in three layers, resolved from lowest to highest priority:
 
-For definitions shared across a team, use `--workspace-root` to point at a
-shared `.ignorekit` directory (e.g. in a monorepo or team config repo).
-For `remove`, `--workspace-root` is also the deletion target unless an explicit
-`--output-root` is supplied.
-Use `--dry-run` with `init`, `adopt`, `generate`, `create`, or `remove` to
-preview a write or deletion without changing files, Git state, or the index.
+| Layer | Location | Purpose |
+|-------|----------|---------|
+| **Dist** | Shipped with ignorekit | Standard components and presets |
+| **User** | `~/.ignorekit` | Personal overrides and custom definitions |
+| **Workspace** | `--workspace-root <path>` | Team-shared definitions |
+
+Higher layers override lower ones — a user-layer `language/java` replaces the shipped one. All layers are searched automatically; no extra flags needed to pick up user or workspace definitions.
 
 ## Components
 
@@ -229,14 +229,9 @@ preview a write or deletion without changing files, Git state, or the index.
 | Local | `local/env-secrets`, `local/logs`, `local/assistant-artifacts` |
 | AI tools | `local/ai-claude`, `local/ai-gemini`, `local/ai-codex`, `local/ai-codegraph` |
 
-Shipped definitions target public repositories: local editor workspaces, AI tool
-state, secrets, and machine-specific files are ignored by default. Projects that
-intentionally publish tool configuration can add explicit negation rules or omit
-the corresponding component. AI tool components remain opt-in.
+Shipped definitions target public repositories: local editor workspaces, AI tool state, secrets, and machine-specific files are ignored by default. Projects that intentionally publish tool configuration can add explicit negation rules or omit the corresponding component. AI tool components remain opt-in.
 
-Shipped presets avoid duplicate rules when expanded. The default environment
-component ignores `.env.*` files while keeping `.env.example` and `.env.sample`
-available for version control.
+Shipped presets avoid duplicate rules when expanded. The default environment component ignores `.env.*` files while keeping `.env.example` and `.env.sample` available for version control.
 
 ## Global flags
 
