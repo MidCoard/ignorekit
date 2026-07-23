@@ -1,6 +1,9 @@
 # Windows files
 Thumbs.db
+Thumbs.db:encryptable
 ehthumbs.db
-Desktop.ini
+ehthumbs_vista.db
+[Dd]esktop.ini
+*.stackdump
 $RECYCLE.BIN/
 *.lnk

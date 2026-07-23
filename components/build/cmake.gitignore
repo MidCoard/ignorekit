@@ -4,8 +4,9 @@ CMakeFiles/
 CMakeScripts/
 cmake_install.cmake
 CTestTestfile.cmake
+Testing/
+Makefile
 install_manifest.txt
-compile_commands.json
 CMakeUserPresets.json
 _deps/
 CMakeLists.txt.user

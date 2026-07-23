@@ -1,7 +1,6 @@
 # PHP
 /vendor/
 composer.phar
-composer.lock
 .phpunit.result.cache
 .phpactor.json
 auth.json

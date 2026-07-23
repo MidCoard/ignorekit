@@ -35,8 +35,8 @@ A preset is a **project type template**. It answers the question: "what kind of 
 | `node` | generic | Node.js project | language/node |
 | `node-pnpm` | node | Node.js + pnpm | package/pnpm |
 | `node-yarn` | node | Node.js + Yarn | package/yarn |
-| `vite` | node | Vite frontend project | framework/vite, testing/browser-e2e |
-| `next` | node | Next.js project | framework/next, testing/browser-e2e |
+| `vite` | node | Vite frontend project | framework/vite |
+| `next` | node | Next.js project | framework/next |
 | `nuxt` | vite | Nuxt project | framework/nuxt |
 | `sveltekit` | vite | SvelteKit project | framework/sveltekit |
 | `angular` | node | Angular project | framework/angular |
@@ -229,7 +229,14 @@ preview a write or deletion without changing files, Git state, or the index.
 | Local | `local/env-secrets`, `local/logs`, `local/assistant-artifacts` |
 | AI tools | `local/ai-claude`, `local/ai-gemini`, `local/ai-codex`, `local/ai-codegraph` |
 
-AI tool components are opt-in. Add the tools your project actually uses as extra components in `ignorekit.json`.
+Shipped definitions target public repositories: local editor workspaces, AI tool
+state, secrets, and machine-specific files are ignored by default. Projects that
+intentionally publish tool configuration can add explicit negation rules or omit
+the corresponding component. AI tool components remain opt-in.
+
+Shipped presets avoid duplicate rules when expanded. The default environment
+component ignores `.env.*` files while keeping `.env.example` and `.env.sample`
+available for version control.
 
 ## Global flags
 

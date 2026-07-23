@@ -1,4 +1,7 @@
 # macOS files
 .DS_Store
+.localized
+__MACOSX/
 ._*
 .AppleDouble
+Icon[ ]

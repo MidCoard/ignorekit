@@ -2,5 +2,5 @@
   "name": "vite",
   "base": "node",
   "description": "Vite frontend project.",
-  "components": ["framework/vite", "testing/browser-e2e"]
+  "components": ["framework/vite"]
 }

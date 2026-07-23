@@ -2,5 +2,5 @@
   "name": "next",
   "base": "node",
   "description": "Next.js project.",
-  "components": ["framework/next", "testing/browser-e2e"]
+  "components": ["framework/next"]
 }

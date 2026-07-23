@@ -1,4 +1,7 @@
 # pip
+# Packaging
+build/
+dist/
 *.egg-info/
 *.egg
 .eggs/
@@ -8,5 +11,14 @@ pip-log.txt
 pip-delete-this-directory.txt
 .venv/
 venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
 .pytest_cache/
 .mypy_cache/

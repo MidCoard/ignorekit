@@ -1,4 +1,7 @@
 # Angular
+dist/
 .angular/
 out-tsc/
 .ng/
+tmp/
+coverage/

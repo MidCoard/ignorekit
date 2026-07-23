@@ -1,9 +1,17 @@
 # C / C++
 *.o
+*.elf
+*.ilk
+*.map
+*.exp
 *.so
 *.so.*
 *.a
+*.lib
+*.la
+*.lo
 *.out
+*.app
 *.obj
 *.exe
 *.dll
@@ -11,4 +19,9 @@
 *.gch
 *.pch
 *.d
+*.dSYM/
+*.pdb
+*.su
+*.idb
+*.dwo
 compile_commands.json

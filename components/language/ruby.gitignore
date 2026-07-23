@@ -8,5 +8,4 @@
 /pkg/
 /spec/reports/
 /spec/examples.txt
-.ruby-version
 .rvmrc
