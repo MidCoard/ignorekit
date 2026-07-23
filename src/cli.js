@@ -34,7 +34,6 @@ const BOOLEAN_OPTIONS = new Set([
 // The key is the camelCase option name; the value is the plural property
 // name on the options object (e.g. --component -> options.components).
 const REPEATABLE_OPTIONS = {
-  template: 'templates',
   component: 'components',
   exclude: 'exclude',
   rule: 'rules'
@@ -48,6 +47,7 @@ const REMOVED_OPTIONS = {
   userRoot: 'Use the IGNOREKIT_USER_ROOT environment variable instead',
   noGit: 'The default is no git init; just use --git when you want git init',
   yes: 'Confirmation is now the default in interactive mode; use --confirm on remove to skip the prompt in CI',
+  template: 'The local provider does not support templates',
   apply: 'Adopt always writes after confirmation — the flag is no longer needed',
   generate: 'Adopt always writes after confirmation — the flag is no longer needed'
 };
@@ -111,6 +111,19 @@ function parseArgs(args) {
     index += 1;
   }
   return options;
+}
+
+function optionName(key) {
+  return key.replace(/[A-Z]/g, char => `-${char.toLowerCase()}`);
+}
+
+function assertAllowedOptions(command, options, allowed) {
+  for (const key of Object.keys(options)) {
+    if (key === '_' || key === 'userRoot' || key === '_userRootExplicit') continue;
+    if (!allowed.has(key)) {
+      throw new Error(`Option --${optionName(key)} is not supported by ignorekit ${command}. Run 'ignorekit help ${command}' for usage.`);
+    }
+  }
 }
 
 // --- Help system ---
@@ -182,7 +195,7 @@ overwriting. Pass --confirm to skip the prompt (useful in CI).
 
 With --remove-cached, files that are tracked by Git but now ignored by
 the new .gitignore are removed from the Git index. Add --dry-run to
-preview which files would be removed without actually removing them.
+preview the generated file without writing it or inspecting Git's index.
 
 Examples:
   ignorekit generate
@@ -206,6 +219,7 @@ Options:
   --git                  Run git init in the project directory
   --overwrite            Replace existing ignorekit.json and .gitignore
   --preview              Skip the "Show preview?" question, show directly
+  --dry-run              Preview config and .gitignore without writing or initializing Git
   --workspace-root <path> Team-shared definition directory
   --allow-nested-git     Allow initializing a nested Git repo
 
@@ -264,7 +278,8 @@ Component options:
   --rule <pattern>        Include one rule (repeatable; explicit, no analysis)
   --output-root <path>    Definition root (default: ~/.ignorekit)
   --overwrite             Replace an existing component
-  --workspace-root <path> Team-shared definition directory
+  --dry-run               Preview the target without writing it
+  --workspace-root <path> Team-shared definition directory (write target when --output-root is omitted)
 
   The positional name can include a category prefix using slash syntax:
   "local/runtime" is equivalent to --category local --name runtime.
@@ -279,6 +294,8 @@ Preset options:
   --component <id>        Include a component (repeatable)
   --output-root <path>    Definition root (default: ~/.ignorekit)
   --overwrite             Replace an existing preset
+  --dry-run               Preview the target without writing it
+  --workspace-root <path> Team-shared definition directory (write target when --output-root is omitted)
 
 Examples:
   ignorekit create component runtime --category local --from ./.gitignore
@@ -297,7 +314,9 @@ Arguments:
 
 Options:
   --workspace-root <path> Team-shared definition directory
+  --output-root <path>    Definition root to remove from (takes precedence)
   --confirm               Confirm removal without prompt (required in non-interactive mode)
+  --dry-run               Preview removal without deleting a definition
 
   Only user-layer and workspace-layer definitions can be removed.
   Shipped (dist-layer) definitions cannot be deleted.
@@ -359,7 +378,9 @@ Examples:
 // --- List command ---
 
 function commandList(args, env) {
-  const options = applyUserRootDefault(parseArgs(args));
+  const options = parseArgs(args);
+  assertAllowedOptions('list', options, new Set(['workspaceRoot']));
+  applyUserRootDefault(options);
   const target = options._[0] || 'all';
   const { stdout, stderr, cwd } = extractStreams(env);
 
@@ -405,7 +426,9 @@ function createResolverFromOptions(options, configPath, env) {
 
 async function commandGenerate(args, env) {
   const { stdout, stderr, cwd } = extractStreams(env);
-  const options = applyUserRootDefault(parseArgs(args));
+  const options = parseArgs(args);
+  assertAllowedOptions('generate', options, new Set(['workspaceRoot', 'output', 'preview', 'confirm', 'removeCached', 'dryRun']));
+  applyUserRootDefault(options);
   // Default to ./ignorekit.json in current directory when no config path
   // is provided — the most common use case after `ignorekit adopt`.
   const configPath = options._[0] || 'ignorekit.json';
@@ -420,6 +443,14 @@ async function commandGenerate(args, env) {
   const resolver = createResolverFromOptions(options, absoluteConfigPath, env);
   const content = await generateGitignore({ config, resolver, env });
   const outputPath = path.resolve(path.dirname(absoluteConfigPath), options.output || '.gitignore');
+
+  if (options.dryRun) {
+    stdout.write(`\n--- Preview (.gitignore) ---\n`);
+    stdout.write(content);
+    stdout.write(`--- End preview ---\n\n`);
+    stdout.write('Dry run -- no files written or Git index changes made.\n');
+    return;
+  }
 
   // Preview: ask instead of auto-showing. When --preview is passed, show the
   // preview directly (the flag is the explicit answer). When the flag is NOT
@@ -456,7 +487,7 @@ async function commandGenerate(args, env) {
   stdout.write(`Generated ${outputPath}\n`);
 
   // Handle cached file removal. --remove-cached is an explicit opt-in, so it
-  // removes for real. Combine with --dry-run to preview without removing.
+  // removes for real. Dry-run exits above before touching Git's index.
   if (options.removeCached) {
     const projectPath = path.dirname(absoluteConfigPath);
     const files = listTrackedIgnoredFiles(projectPath);
@@ -632,6 +663,19 @@ function buildCreateEnv(env) {
   return result;
 }
 
+function buildRemoveEnv(env) {
+  const { stdout, stderr, cwd } = extractStreams(env);
+  const result = { stdout, stderr, cwd };
+  if (env.stdin) result.stdin = env.stdin;
+  if (env.confirm) {
+    result.confirm = env.confirm;
+    return result;
+  }
+  const confirm = createConfirm(env, { defaultValue: false });
+  if (confirm) result.confirm = confirm;
+  return result;
+}
+
 /**
  * Build the env passed to pickPresetInteractive. Centralizes the env
  * construction so that cwd, stdin, and ask are consistently included
@@ -688,6 +732,12 @@ async function runCli(args, env = {}) {
       return { exitCode: 0 };
     }
 
+    if (['list', 'generate', 'explain', 'analyze', 'init', 'adopt', 'create', 'remove'].includes(command) &&
+        args.slice(1).some(arg => arg === '--help' || arg === '-h')) {
+      printCommandHelp(command, stdout);
+      return { exitCode: 0 };
+    }
+
     // List
     if (command === 'list') {
       commandList(args.slice(1), { stdout, stderr, cwd });
@@ -709,7 +759,9 @@ async function runCli(args, env = {}) {
 
     // Explain
     if (command === 'explain') {
-      const options = applyUserRootDefault(parseArgs(args.slice(1)));
+      const options = parseArgs(args.slice(1));
+      assertAllowedOptions('explain', options, new Set(['verbose', 'workspaceRoot']));
+      applyUserRootDefault(options);
       options.configPath = options._[0] || 'ignorekit.json';
       runExplainWorkflow(options, { stdout, stderr, cwd });
       return { exitCode: 0 };
@@ -717,7 +769,9 @@ async function runCli(args, env = {}) {
 
     // Analyze
     if (command === 'analyze') {
-      const options = applyUserRootDefault(parseArgs(args.slice(1)));
+      const options = parseArgs(args.slice(1));
+      assertAllowedOptions('analyze', options, new Set(['suggestPreset', 'workspaceRoot']));
+      applyUserRootDefault(options);
       options.gitignorePath = options._[0] || '.gitignore';
       // The cwd is the project root for signal detection. When the .gitignore
       // is in a subdirectory, signal detection must still scan the project root
@@ -731,7 +785,9 @@ async function runCli(args, env = {}) {
 
     // Init
     if (command === 'init') {
-      const options = applyUserRootDefault(parseArgs(args.slice(1)));
+      const options = parseArgs(args.slice(1));
+      assertAllowedOptions('init', options, new Set(['preset', 'components', 'exclude', 'git', 'overwrite', 'preview', 'dryRun', 'workspaceRoot', 'allowNestedGit']));
+      applyUserRootDefault(options);
       options.projectPath = options._[0] || '.';
       if (!options.preset) {
         const picked = await pickPresetInteractive(options, buildPickerEnv(env));
@@ -739,15 +795,15 @@ async function runCli(args, env = {}) {
         options.preset = picked;
       }
       options.git = Boolean(options.git);
-      // Repeatable options (templates, components, exclude) are now accumulated
+      // Repeatable options (components and exclude) are accumulated
       // by parseArgs into arrays. Default to empty arrays when none were given.
-      options.templates = options.templates || [];
       options.components = options.components || [];
       options.exclude = options.exclude || [];
       // Route through buildCreateEnv so TTY/CI detection honors the same
       // rules as `adopt` and `create`. Previously init had no confirm gate.
       const initEnv = buildCreateEnv({ stdout, stderr, cwd, stdin: env.stdin, ask: env.ask });
       const result = await runInitWorkflow(options, initEnv);
+      if (result.dryRun) return { exitCode: 0 };
       if (result.configPath === null) {
         // User declined the confirm — no files written.
         return { exitCode: 1 };
@@ -763,20 +819,22 @@ async function runCli(args, env = {}) {
 
     // Adopt
     if (command === 'adopt') {
-      const options = applyUserRootDefault(parseArgs(args.slice(1)));
+      const options = parseArgs(args.slice(1));
+      assertAllowedOptions('adopt', options, new Set(['preset', 'components', 'exclude', 'overwriteConfig', 'preview', 'confirm', 'removeCached', 'dryRun', 'workspaceRoot']));
+      applyUserRootDefault(options);
       options.projectPath = options._[0] || '.';
       if (!options.preset) {
         const picked = await pickPresetInteractive(options, buildPickerEnv(env));
         if (!picked) return { exitCode: 1 };
         options.preset = picked;
       }
-      options.templates = options.templates || [];
       options.components = options.components || [];
       options.exclude = options.exclude || [];
       // Route through buildCreateEnv so TTY/CI detection honors the same
       // rules as `create`.
       const adoptEnv = buildCreateEnv({ stdout, stderr, cwd, stdin: env.stdin, ask: env.ask });
       const result = await runAdoptWorkflow(options, adoptEnv);
+      if (result.dryRun) return { exitCode: 0 };
       if (result.configPath === null) {
         // user cancelled or declined overwrite
         return { exitCode: 1 };
@@ -788,7 +846,13 @@ async function runCli(args, env = {}) {
     // Create
     if (command === 'create') {
       const subcommand = args[1];
-      let options = applyUserRootDefault(parseArgs(args.slice(2)));
+      let options = parseArgs(args.slice(2));
+      if (subcommand === 'component') {
+        assertAllowedOptions('create component', options, new Set(['category', 'from', 'rules', 'outputRoot', 'overwrite', 'dryRun', 'workspaceRoot']));
+      } else if (subcommand === 'preset') {
+        assertAllowedOptions('create preset', options, new Set(['base', 'components', 'outputRoot', 'overwrite', 'dryRun', 'workspaceRoot']));
+      }
+      applyUserRootDefault(options);
       // Route through buildCreateEnv with the same explicit env construction
       // as init and adopt, so the create command gets a consistent env shape
       // (stdout, stderr, cwd, stdin, ask) rather than the raw env object which
@@ -836,6 +900,7 @@ async function runCli(args, env = {}) {
           options = { ...options, ...draft };
         }
         const result = await runComponentCreate(options, createEnv);
+        if (result.dryRun) return { exitCode: 0 };
         return { exitCode: result.outputPath ? 0 : 1 };
       }
       if (subcommand === 'preset') {
@@ -848,6 +913,7 @@ async function runCli(args, env = {}) {
           options = { ...options, ...draft };
         }
         const result = await runPresetCreate(options, createEnv);
+        if (result.dryRun) return { exitCode: 0 };
         return { exitCode: result.outputPath ? 0 : 1 };
       }
       throw new Error('create supports: component, preset');
@@ -856,18 +922,24 @@ async function runCli(args, env = {}) {
     // Remove
     if (command === 'remove') {
       const subcommand = args[1];
-      const options = applyUserRootDefault(parseArgs(args.slice(2)));
-      const removeEnv = buildCreateEnv({ stdout, stderr, cwd, stdin: env.stdin, ask: env.ask });
+      const options = parseArgs(args.slice(2));
+      if (subcommand === 'component' || subcommand === 'preset') {
+        assertAllowedOptions(`remove ${subcommand}`, options, new Set(['outputRoot', 'workspaceRoot', 'confirm', 'dryRun']));
+      }
+      applyUserRootDefault(options);
+      const removeEnv = buildRemoveEnv({ stdout, stderr, cwd, stdin: env.stdin, ask: env.ask });
       if (subcommand === 'component') {
         options.id = options._[0];
         if (!options.id) throw new Error('Component ID is required (e.g. language/kotlin-canceled)');
         const result = await runComponentRemove(options, removeEnv);
+        if (result.dryRun) return { exitCode: 0 };
         return { exitCode: result.removed ? 0 : 1 };
       }
       if (subcommand === 'preset') {
         options.id = options._[0];
         if (!options.id) throw new Error('Preset ID is required (e.g. my-custom-preset)');
         const result = await runPresetRemove(options, removeEnv);
+        if (result.dryRun) return { exitCode: 0 };
         return { exitCode: result.removed ? 0 : 1 };
       }
       throw new Error('remove supports: component, preset');

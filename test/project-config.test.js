@@ -40,14 +40,12 @@ test('rejects unknown provider name', () => {
   }), /unknown provider/);
 });
 
-test('accepts local provider with empty templates array', () => {
-  // Local provider ignores templates entirely, so an empty array is harmless.
-  const config = normalizeProjectConfig({
+test('rejects local provider templates because they are not generated', () => {
+  assert.throws(() => normalizeProjectConfig({
     version: 1,
     name: 'demo',
     provider: { name: 'local', templates: [] }
-  });
-  assert.deepEqual(config.provider, { name: 'local', templates: [] });
+  }), /provider\.templates is not supported/i);
 });
 
 test('defaults provider to local when omitted', () => {
@@ -79,6 +77,14 @@ test('rejects non-array component fields instead of silently dropping rules', ()
   }
 });
 
+test('rejects multi-line custom rules', () => {
+  assert.throws(() => normalizeProjectConfig({
+    version: 1,
+    name: 'demo',
+    custom: ['cache/\nlogs/']
+  }), /config\.custom must not contain line breaks/);
+});
+
 test('normalizes exclude field', () => {
   const config = normalizeProjectConfig({
     version: 1,
@@ -107,14 +113,18 @@ test('buildProjectConfig omits provider.templates when no templates are provided
   assert.deepEqual(config.provider, { name: 'local' });
 });
 
-test('buildProjectConfig includes provider.templates for local provider when templates are provided', () => {
-  // Local provider ignores templates at generation time, but the config
-  // object still carries them when the caller provides a non-empty array.
-  // This avoids a redundant PROVIDERS_REQUIRING_TEMPLATES check that would
-  // need to be kept in sync when new providers are added.
+test('buildProjectConfig rejects an empty project name', () => {
+  const { buildProjectConfig } = require('../src/config/build-config');
+  assert.throws(
+    () => buildProjectConfig('', { provider: 'local' }),
+    /project name is required/
+  );
+});
+
+test('buildProjectConfig does not persist ignored provider templates', () => {
   const { buildProjectConfig } = require('../src/config/build-config');
   const config = buildProjectConfig('demo', { provider: 'local', templates: ['Node'] });
-  assert.deepEqual(config.provider, { name: 'local', templates: ['Node'] });
+  assert.deepEqual(config.provider, { name: 'local' });
 });
 
 test('buildProjectConfig rejects unknown provider name', () => {

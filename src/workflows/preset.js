@@ -16,8 +16,10 @@ const { extractStreams } = require('../core/env');
  * @param {string} options.name - Preset name
  * @param {string} [options.base] - Base preset to extend
  * @param {string[]} [options.components] - Components to include
- * @param {string} [options.outputRoot] - Output directory (default: ~/.ignorekit)
+ * @param {string} [options.outputRoot] - Output directory (otherwise workspaceRoot, then ~/.ignorekit)
  * @param {boolean} [options.overwrite] - Replace an existing preset
+ * @param {boolean} [options.dryRun] - Preview without writing
+ * @param {string} [options.workspaceRoot] - Workspace-level definition directory
  * @param {object} env
  * @param {object} env.stdout - Writable stream for output
  * @param {string} [env.cwd] - Current working directory
@@ -32,13 +34,15 @@ async function runPresetCreate(options, env) {
   }
   const outputRoot = options.outputRoot
     ? path.resolve(cwd, options.outputRoot)
-    : USER_ROOT;
+    : options.workspaceRoot
+      ? path.resolve(cwd, options.workspaceRoot)
+      : USER_ROOT;
   // --user-root is a discovery source only. Without --output-root, the preset
   // is written to the personal definitions layer (~/.ignorekit) regardless of
   // what --user-root points at, so callers always know where to find it. The
   // `_userRootExplicit` flag is set by applyUserRootDefault so the warning
   // only fires when the user actually typed --user-root.
-  if (options._userRootExplicit && !options.outputRoot) {
+  if (options._userRootExplicit && !options.outputRoot && !options.workspaceRoot) {
     stderr.write(`Note: --user-root is a discovery source. Without --output-root, the file is written to ${USER_ROOT} (the default user definitions layer).\n`);
     stderr.write(`      Pass --output-root to write somewhere else.\n`);
   }
@@ -48,7 +52,7 @@ async function runPresetCreate(options, env) {
   // learn "already exists" first; showing a preview only to throw on a
   // file-exists check at the end is wasted work and produces misleading
   // output. The guard is symmetric with component's --overwrite flag.
-  if (fs.existsSync(outputPath) && !options.overwrite) {
+  if (fs.existsSync(outputPath) && !options.overwrite && !options.dryRun) {
     throw new Error(`Preset already exists: ${outputPath}. Use --overwrite to replace it.`);
   }
   const components = Array.isArray(options.components) ? options.components : [];
@@ -71,6 +75,11 @@ async function runPresetCreate(options, env) {
   }
   stdout.write(`Output: ${outputPath}\n`);
 
+  if (options.dryRun) {
+    stdout.write('Dry run -- no preset file written.\n');
+    return { outputPath, preset, resolvedComponents: components, dryRun: true };
+  }
+
   if (env.confirm) {
     const proceed = await env.confirm('Write preset file? [Y/n]: ');
     if (!proceed) {
@@ -81,7 +90,9 @@ async function runPresetCreate(options, env) {
 
   writeJson(outputPath, preset);
   stdout.write(`\nCreated preset ${options.name} → ${outputPath}\n`);
-  if (!options.outputRoot) {
+  if (options.workspaceRoot && !options.outputRoot) {
+    stdout.write(`  Preset is available through the workspace definitions layer.\n`);
+  } else if (!options.outputRoot) {
     stdout.write(`  Preset is available to all projects via the user definitions layer.\n`);
   }
   return { outputPath, preset, resolvedComponents: components };

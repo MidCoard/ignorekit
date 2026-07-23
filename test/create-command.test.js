@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const test = require('node:test');
 const { runCli } = require('../src/cli');
+const { promptComponentCreation, promptPresetCreation } = require('../src/interactive/create');
 const { createTempWorkspace } = require('./helpers/temp-workspace');
 
 /**
@@ -145,6 +146,96 @@ test('create component can select specific rules via --rule', async () => {
   }
 });
 
+test('create component rejects whitespace-only literal rules', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    const errors = [];
+    const result = await runCli([
+      'create', 'component', 'local/no-empty-rules',
+      '--output-root', workspace.path('defs'),
+      '--rule', '   '
+    ], {
+      stdout: { write() {} },
+      stderr: { write: text => errors.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 1);
+    assert.match(errors.join(''), /non-empty strings/);
+    assert.equal(fs.existsSync(workspace.path('defs/components/local/no-empty-rules.gitignore')), false);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('create component rejects multi-line literal rules', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    const errors = [];
+    const result = await runCli([
+      'create', 'component', 'local/no-multiline-rules',
+      '--output-root', workspace.path('defs'),
+      '--rule', 'cache/\nlogs/'
+    ], {
+      stdout: { write() {} },
+      stderr: { write: text => errors.push(String(text)) },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 1);
+    assert.match(errors.join(''), /without line breaks/);
+    assert.equal(fs.existsSync(workspace.path('defs/components/local/no-multiline-rules.gitignore')), false);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('create component writes to --workspace-root when --output-root is omitted', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    const result = await runCli([
+      'create', 'component', 'local/team-runtime',
+      '--workspace-root', workspace.path('team-defs'),
+      '--rule', 'team-runtime/'
+    ], {
+      envVars: {
+        IGNOREKIT_DIST_ROOT: workspace.path('dist'),
+        IGNOREKIT_USER_ROOT: workspace.path('personal-defs')
+      },
+      stdout: { write() {} },
+      stderr: { write() {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(fs.existsSync(workspace.path('team-defs/components/local/team-runtime.gitignore')), true);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('create component --dry-run previews the target without writing a definition', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    const output = [];
+    const result = await runCli([
+      'create', 'component', 'local/dry-run',
+      '--output-root', workspace.path('defs'),
+      '--rule', 'dry-run/', '--dry-run'
+    ], {
+      stdout: { write: text => output.push(String(text)) },
+      stderr: { write() {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(fs.existsSync(workspace.path('defs/components/local/dry-run.gitignore')), false);
+    assert.match(output.join(''), /Dry run/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('create preset is the primary way to create presets', async () => {
   const workspace = createTempWorkspace();
   try {
@@ -162,6 +253,86 @@ test('create preset is the primary way to create presets', async () => {
     const preset = JSON.parse(fs.readFileSync(workspace.path('defs/presets/team-vite.json'), 'utf8'));
     assert.equal(preset.base, 'vite');
     assert.deepEqual(preset.components, ['language/node', 'local/runtime']);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('create preset writes to --workspace-root when --output-root is omitted', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    const result = await runCli([
+      'create', 'preset', 'team-stack',
+      '--workspace-root', workspace.path('team-defs'),
+      '--component', 'language/node'
+    ], {
+      envVars: {
+        IGNOREKIT_DIST_ROOT: workspace.path('dist'),
+        IGNOREKIT_USER_ROOT: workspace.path('personal-defs')
+      },
+      stdout: { write() {} },
+      stderr: { write() {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(fs.existsSync(workspace.path('team-defs/presets/team-stack.json')), true);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('guided create preserves --workspace-root as the definition target', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    const workspaceRoot = workspace.path('team-defs');
+    const componentAnswers = ['local', 'guided-runtime', '', 'runtime/', ''];
+    const componentDraft = await promptComponentCreation(
+      { workspaceRoot },
+      {
+        cwd: workspace.root,
+        stdout: { write() {} },
+        stderr: { write() {} },
+        ask: async () => componentAnswers.shift()
+      }
+    );
+    assert.equal(componentDraft.outputRoot, workspaceRoot);
+
+    workspace.writeJson('dist/presets/generic.json', { name: 'generic', components: [] });
+    const presetAnswers = ['guided-team', '0', ''];
+    const presetDraft = await promptPresetCreation(
+      { workspaceRoot },
+      {
+        cwd: workspace.root,
+        stdout: { write() {} },
+        stderr: { write() {} },
+        ask: async () => presetAnswers.shift(),
+        distRoot: workspace.path('dist')
+      }
+    );
+    assert.equal(presetDraft.outputRoot, workspaceRoot);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('create preset --dry-run previews the target without writing a definition', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    const output = [];
+    const result = await runCli([
+      'create', 'preset', 'dry-run-preset',
+      '--output-root', workspace.path('defs'),
+      '--component', 'language/node', '--dry-run'
+    ], {
+      stdout: { write: text => output.push(String(text)) },
+      stderr: { write() {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(fs.existsSync(workspace.path('defs/presets/dry-run-preset.json')), false);
+    assert.match(output.join(''), /Dry run/);
   } finally {
     workspace.cleanup();
   }

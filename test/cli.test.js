@@ -89,6 +89,42 @@ test('unknown command returns exit code 1', async () => {
   assert.match(errors.join(''), /Unknown command/);
 });
 
+test('command --help prints command-specific help without parsing it as an option', async () => {
+  let output = '';
+  const result = await runCli(['init', '--help'], {
+    stdout: { write: text => { output += text; } },
+    stderr: { write() {} },
+    cwd: process.cwd()
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(output, /ignorekit init/);
+});
+
+test('command help works after positional arguments', async () => {
+  let output = '';
+  const result = await runCli(['create', 'component', 'local/runtime', '--help'], {
+    stdout: { write: text => { output += text; } },
+    stderr: { write() {} },
+    cwd: process.cwd()
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(output, /ignorekit create/);
+});
+
+test('commands reject options they do not support', async () => {
+  const errors = [];
+  const result = await runCli(['list', '--unknown', 'value'], {
+    stdout: { write() {} },
+    stderr: { write: text => errors.push(String(text)) },
+    cwd: process.cwd()
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.match(errors.join(''), /Option --unknown is not supported by ignorekit list/);
+});
+
 // --- List ---
 
 test('list does not crash with ReferenceError when a preset has a broken base chain', async () => {
@@ -576,6 +612,13 @@ test('parseArgs rejects removed flag --yes', () => {
   assert.throws(
     () => parseArgs(['--yes']),
     /Option --yes is no longer supported/
+  );
+});
+
+test('parseArgs rejects unsupported local-provider templates', () => {
+  assert.throws(
+    () => parseArgs(['--template', 'Node']),
+    /Option --template is no longer supported.*local provider/i
   );
 });
 

@@ -289,14 +289,9 @@ function matchAllComponents(resolver, inputLines, env) {
     return !expanded.some(form => allMatchedNormalized.has(form));
   });
 
-  // Unmatched lines use ALL matched components (not just displayed ones) so that
-  // a rule covered by a hidden low-signal partial is not falsely reported as
-  // unmatched. The display filter hides noise from the component table, but a
-  // covered rule is covered regardless of whether its component is displayed.
-  const displayedUnmatchedLines = inputLines.filter(line => {
-    const expanded = normalizePatternExpanded(line);
-    return !expanded.some(form => allMatchedNormalized.has(form));
-  });
+  // The table may hide low-signal partial matches, but a rule covered by any
+  // match remains covered in the custom-rule view.
+  const displayedUnmatchedLines = unmatchedLines;
 
   const totalMatchedCount = matchedComponents.reduce((sum, c) => sum + c.matched.length, 0);
 
@@ -384,7 +379,7 @@ function runAnalyzeWorkflow(options, env) {
   const displayMatchedComponents = analysis.displayMatchedComponents;
   const displayedUnmatchedLines = analysis.displayedUnmatchedLines;
   const coveragePercent = analysis.totalLines > 0
-    ? Math.round((displayMatchedComponents.reduce((sum, c) => sum + c.matched.length, 0) / analysis.totalLines) * 100)
+    ? Math.round(((analysis.totalLines - analysis.unmatchedLines.length) / analysis.totalLines) * 100)
     : 0;
 
   stdout.write(`Matched components (${coveragePercent}% coverage):\n`);

@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const test = require('node:test');
 const { runCli } = require('../src/cli');
+const { runAdoptWorkflow } = require('../src/workflows/adopt');
 const { createTempWorkspace } = require('./helpers/temp-workspace');
 
 test('adopt with --preset skips interactive picker', async () => {
@@ -26,6 +27,59 @@ test('adopt with --preset skips interactive picker', async () => {
     });
 
     assert.equal(result.exitCode, 0);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('adopt --dry-run never creates config or replaces .gitignore', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    workspace.writeText('project/.gitignore', 'keep-this-content\n');
+
+    const output = [];
+    const result = await runCli([
+      'adopt', workspace.path('project'), '--preset', 'demo', '--dry-run'
+    ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
+      stdout: { write: text => output.push(String(text)) },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(fs.existsSync(workspace.path('project/ignorekit.json')), false);
+    assert.equal(workspace.readText('project/.gitignore'), 'keep-this-content\n');
+    assert.match(output.join(''), /Dry run/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('adopt skips --remove-cached when the generated .gitignore is declined', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    workspace.writeText('project/.gitignore', 'keep-this-content\n');
+
+    const output = [];
+    const result = await runAdoptWorkflow({
+      projectPath: workspace.path('project'),
+      preset: 'demo',
+      distRoot: workspace.path('dist'),
+      removeCached: true
+    }, {
+      cwd: workspace.root,
+      stdout: { write: text => output.push(String(text)) },
+      ask: async () => 'n',
+      confirm: async () => false
+    });
+
+    assert.equal(result.cachedRemoval.action, 'skipped');
+    assert.match(output.join(''), /Skipped --remove-cached/);
   } finally {
     workspace.cleanup();
   }
@@ -185,7 +239,7 @@ test('adopt with --overwrite-config replaces existing config', async () => {
   }
 });
 
-test('adopt --remove-cached --dry-run prints file list to stdout', async () => {
+test('adopt --remove-cached --dry-run does not inspect or change the Git index', async () => {
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
@@ -221,8 +275,9 @@ test('adopt --remove-cached --dry-run prints file list to stdout', async () => {
       });
 
       const output = writes.join('');
-      assert.match(output, /secret\.key/);
-      assert.match(output, /debug\.log/);
+      assert.doesNotMatch(output, /secret\.key/);
+      assert.doesNotMatch(output, /debug\.log/);
+      assert.match(output, /Dry run/);
     } finally {
       git.listTrackedIgnoredFiles = origList;
       git.removeCachedFiles = origRemove;
@@ -424,7 +479,7 @@ test('adopt preserves the source byte text of custom rules (trailing whitespace,
 
 // --- #3 (P0): adopt always writes after confirm ---
 
-test('adopt deduplicates custom rules that differ only in whitespace (#5)', async () => {
+test('adopt preserves custom rules that differ in whitespace', async () => {
   const workspace = createTempWorkspace();
   try {
     // A .gitignore with the same rule appearing twice — once with trailing
@@ -447,9 +502,8 @@ test('adopt deduplicates custom rules that differ only in whitespace (#5)', asyn
     assert.equal(result.exitCode, 0);
     const config = JSON.parse(fs.readFileSync(workspace.path('project/ignorekit.json'), 'utf8'));
     // The whitespace-duplicate "node_modules/" must appear only once in custom.
-    const nodeCount = config.custom.filter(r => r.trim() === 'node_modules/').length;
-    assert.equal(nodeCount, 1,
-      `expected exactly 1 'node_modules/' entry in custom, got ${nodeCount}: ${JSON.stringify(config.custom)}`);
+    assert.ok(config.custom.includes('node_modules/'));
+    assert.ok(config.custom.includes('node_modules/   '));
     // The genuinely distinct rule must also be present.
     assert.ok(config.custom.some(r => r.trim() === 'custom-rule/'),
       `expected 'custom-rule/' in custom, got: ${JSON.stringify(config.custom)}`);
@@ -458,7 +512,7 @@ test('adopt deduplicates custom rules that differ only in whitespace (#5)', asyn
   }
 });
 
-test('adopt recognizes covered rules despite whitespace mismatch (#6)', async () => {
+test('adopt keeps whitespace-sensitive rules that a component does not exactly cover', async () => {
   const workspace = createTempWorkspace();
   try {
     // The component file has "logs/" without trailing whitespace.
@@ -481,8 +535,8 @@ test('adopt recognizes covered rules despite whitespace mismatch (#6)', async ()
     assert.equal(result.exitCode, 0);
     const config = JSON.parse(fs.readFileSync(workspace.path('project/ignorekit.json'), 'utf8'));
     // "logs/" is covered by the component — must NOT appear in custom.
-    assert.ok(!config.custom.some(r => r.trim() === 'logs/'),
-      `'logs/' should be covered, not custom; got: ${JSON.stringify(config.custom)}`);
+    assert.ok(config.custom.includes('logs/   '),
+      `'logs/   ' should be preserved as custom; got: ${JSON.stringify(config.custom)}`);
     // The genuinely custom rule must be present.
     assert.ok(config.custom.some(r => r.trim() === 'custom-rule/'),
       `expected 'custom-rule/' in custom, got: ${JSON.stringify(config.custom)}`);

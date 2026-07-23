@@ -6,6 +6,7 @@ const os = require('os');
 const assert = require('assert/strict');
 const test = require('node:test');
 const { runComponentRemove, runPresetRemove } = require('../src/workflows/remove');
+const { DIST_ROOT } = require('../src/core/path');
 
 function createTempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ignorekit-remove-'));
@@ -84,15 +85,29 @@ test('remove component does not delete category directory with other files', asy
   }
 });
 
-test('remove component refuses shipped (dist-layer) definitions', async () => {
-  // language/java is a shipped component
+test('remove component refuses a dist-layer file', async () => {
   await assert.rejects(
     () => runComponentRemove(
-      { id: 'language/java' },
+      { id: 'language/java', outputRoot: DIST_ROOT },
       { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
     ),
-    /Shipped component cannot be removed/
+    /Shipped definitions cannot be removed/
   );
+});
+
+test('remove component deletes a user override even when a shipped definition has the same ID', async () => {
+  const tmp = createTempDir();
+  try {
+    tmp.writeText('components/language/java.gitignore', '*.override\n');
+    const result = await runComponentRemove(
+      { id: 'language/java', outputRoot: tmp.root, confirm: true },
+      { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
+    );
+    assert.equal(result.removed, true);
+    assert.ok(!tmp.exists('components/language/java.gitignore'));
+  } finally {
+    tmp.cleanup();
+  }
 });
 
 test('remove component errors when file not found', async () => {
@@ -145,6 +160,47 @@ test('remove component with confirm=false does not delete', async () => {
   }
 });
 
+test('remove component treats an empty [y/N] answer as cancellation', async () => {
+  const tmp = createTempDir();
+  try {
+    tmp.writeText('components/local/keep-on-enter.gitignore', '*.keep\n');
+    const { createConfirm } = require('../src/cli/prompt');
+    const confirm = createConfirm({ ask: async () => '' }, { defaultValue: false });
+
+    const result = await runComponentRemove(
+      { id: 'local/keep-on-enter', outputRoot: tmp.root },
+      { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd(), confirm }
+    );
+
+    assert.equal(result.removed, false);
+    assert.ok(tmp.exists('components/local/keep-on-enter.gitignore'));
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('remove component --confirm skips an available confirmation callback', async () => {
+  const tmp = createTempDir();
+  try {
+    tmp.writeText('components/local/skip-available-confirm.gitignore', '*.skip\n');
+    let confirmCalls = 0;
+    const result = await runComponentRemove(
+      { id: 'local/skip-available-confirm', outputRoot: tmp.root, confirm: true },
+      {
+        stdout: { write() {} },
+        stderr: { write() {} },
+        cwd: process.cwd(),
+        confirm: async () => { confirmCalls += 1; return false; }
+      }
+    );
+
+    assert.equal(result.removed, true);
+    assert.equal(confirmCalls, 0);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
 test('remove component with --confirm skips confirm and deletes', async () => {
   const tmp = createTempDir();
   try {
@@ -158,6 +214,22 @@ test('remove component with --confirm skips confirm and deletes', async () => {
     );
     assert.equal(result.removed, true);
     assert.ok(!tmp.exists('components/local/skip-confirm.gitignore'));
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('remove component --dry-run previews the target without deleting it', async () => {
+  const tmp = createTempDir();
+  try {
+    tmp.writeText('components/local/dry-run.gitignore', '*.dry\n');
+    const result = await runComponentRemove(
+      { id: 'local/dry-run', outputRoot: tmp.root, dryRun: true },
+      { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
+    );
+
+    assert.equal(result.dryRun, true);
+    assert.ok(tmp.exists('components/local/dry-run.gitignore'));
   } finally {
     tmp.cleanup();
   }
@@ -191,14 +263,13 @@ test('remove preset deletes the file and returns removed=true', async () => {
   }
 });
 
-test('remove preset refuses shipped (dist-layer) definitions', async () => {
-  // java-gradle is a shipped preset
+test('remove preset refuses a dist-layer file', async () => {
   await assert.rejects(
     () => runPresetRemove(
-      { id: 'java-gradle' },
+      { id: 'java-gradle', outputRoot: DIST_ROOT },
       { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
     ),
-    /Shipped preset cannot be removed/
+    /Shipped definitions cannot be removed/
   );
 });
 
@@ -233,6 +304,22 @@ test('remove preset with confirm=false does not delete', async () => {
   }
 });
 
+test('remove preset --dry-run previews the target without deleting it', async () => {
+  const tmp = createTempDir();
+  try {
+    tmp.writeText('presets/dry-run-preset.json', '{"name":"dry-run-preset","components":[]}');
+    const result = await runPresetRemove(
+      { id: 'dry-run-preset', outputRoot: tmp.root, dryRun: true },
+      { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
+    );
+
+    assert.equal(result.dryRun, true);
+    assert.ok(tmp.exists('presets/dry-run-preset.json'));
+  } finally {
+    tmp.cleanup();
+  }
+});
+
 // --- CLI dispatch ---
 
 test('remove command dispatches to component removal', async () => {
@@ -247,6 +334,22 @@ test('remove command dispatches to component removal', async () => {
     );
     assert.equal(result.exitCode, 0);
     assert.ok(!tmp.exists('components/local/cli-test.gitignore'));
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+test('remove command uses --workspace-root as its target when --output-root is omitted', async () => {
+  const { runCli } = require('../src/cli');
+  const tmp = createTempDir();
+  try {
+    tmp.writeText('components/local/team-runtime.gitignore', '*.team\n');
+    const result = await runCli(
+      ['remove', 'component', 'local/team-runtime', '--workspace-root', tmp.root, '--confirm'],
+      { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
+    );
+    assert.equal(result.exitCode, 0);
+    assert.ok(!tmp.exists('components/local/team-runtime.gitignore'));
   } finally {
     tmp.cleanup();
   }

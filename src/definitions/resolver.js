@@ -75,7 +75,7 @@ function createDefinitionResolver(options = {}) {
   // is unchanged, while library consumers and tests get a pure resolver that
   // touches only the roots they name.
   // Definition layers (lowest to highest priority):
-  //   dist      shipped presets/components/providers
+  //   dist      shipped presets and components
   //   user      ~/.ignorekit overrides and personal definitions
   //   workspace <workspace>/.ignorekit org or workspace definitions
   const layers = [

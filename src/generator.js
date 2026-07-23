@@ -1,7 +1,6 @@
 'use strict';
 
 const { normalizeText } = require('./core/text');
-const { buildProviderText } = require('./providers');
 const { resolvePresetComponents } = require('./definitions/resolver');
 const { debugError } = require('./core/debug');
 const { extractStreams } = require('./core/env');
@@ -16,7 +15,6 @@ const { version: VERSION } = require('../package.json');
  * @param {object} params
  * @param {object} params.config - Normalized project config
  * @param {object} params.resolver - Definition resolver
- * @param {object} [params.providerOptions] - Options forwarded to provider builders
  * @param {object} [params.env] - Environment object. Should contain at least
  *   `{ stderr }` for warning output. When env is missing or partial, extractStreams
  *   (called internally) provides fallbacks to process.stdout, process.stderr, and
@@ -25,7 +23,7 @@ const { version: VERSION } = require('../package.json');
  *   extractStreams at the caller's boundary is recommended so that every function
  *   in the chain has a consistent safety net.
  */
-async function generateGitignore({ config, resolver, providerOptions = {}, env }) {
+async function generateGitignore({ config, resolver, env }) {
   const { stderr } = extractStreams(env);
   const normalized = config;
   const presetComponents = normalized.preset
@@ -79,24 +77,14 @@ async function generateGitignore({ config, resolver, providerOptions = {}, env }
   lines.push('# Edit ignorekit.json or shared definitions, then regenerate.');
   lines.push('');
 
-  // Components are the primary building blocks of the generated .gitignore;
-  // they appear first so that project-specific overrides and provider text
-  // can reference or override them. Provider templates (from external sources
-  // like gitignore.io) come after components because they are supplementary
-  // and may contain patterns that overlap with component rules.
+  // Components are the primary building blocks of the generated .gitignore.
+  // Project-specific rules follow them so local overrides remain last.
   for (const componentId of resolvedIds) {
     const componentText = resolvedContent.get(componentId);
     if (componentText) {
       lines.push(componentText);
       lines.push('');
     }
-  }
-
-  const providerText = normalizeText(await buildProviderText(normalized.provider, { ...providerOptions, stderr })).replace(/\n$/, '');
-  if (providerText) {
-    lines.push('# Provider templates');
-    lines.push(providerText);
-    lines.push('');
   }
 
   if (normalized.custom.length > 0) {

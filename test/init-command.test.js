@@ -34,6 +34,31 @@ test('init with --preset skips interactive picker', async () => {
   }
 });
 
+test('init --dry-run previews output without creating a project directory or Git repository', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    const output = [];
+
+    const result = await runCli([
+      'init', workspace.path('new-project'), '--preset', 'demo', '--git', '--dry-run'
+    ], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
+      stdout: { write: text => output.push(String(text)) },
+      stderr: { write: () => {} },
+      cwd: workspace.root
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(fs.existsSync(workspace.path('new-project')), false);
+    assert.match(output.join(''), /Preview \(ignorekit\.json\)/);
+    assert.match(output.join(''), /Dry run/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('init --git reports when the target is already a Git repository', async () => {
   const workspace = createTempWorkspace();
   try {
@@ -328,4 +353,3 @@ test('init confirm=y writes files', async () => {
     workspace.cleanup();
   }
 });
-

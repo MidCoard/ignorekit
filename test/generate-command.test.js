@@ -35,6 +35,35 @@ test('generate writes .gitignore from a project config and does not require Git'
   }
 });
 
+test('generate --dry-run never writes an existing .gitignore', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n');
+    workspace.writeJson('dist/presets/demo.json', { name: 'demo', components: ['local/logs'] });
+    const configPath = workspace.writeJson('project/ignorekit.json', {
+      version: 1,
+      name: 'project',
+      preset: 'demo',
+      provider: { name: 'local' }
+    });
+    workspace.writeText('project/.gitignore', 'keep-this-content\n');
+
+    const output = [];
+    const result = await runCli(['generate', configPath, '--dry-run'], {
+      envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') },
+      stdout: { write: text => output.push(String(text)) },
+      stderr: { write: () => {} },
+      cwd: workspace.path('project')
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(workspace.readText('project/.gitignore'), 'keep-this-content\n');
+    assert.match(output.join(''), /Dry run/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('generate reads user-layer definitions for extra components', async () => {
   const workspace = createTempWorkspace();
   try {

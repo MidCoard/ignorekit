@@ -15,6 +15,9 @@ function normalizeStringArray(value, field) {
   if (value.some(entry => entry.trim() === '')) {
     throw new Error(`config.${field} must not contain empty or whitespace-only strings`);
   }
+  if (value.some(entry => /[\r\n]/.test(entry))) {
+    throw new Error(`config.${field} must not contain line breaks`);
+  }
   return value;
 }
 
@@ -39,6 +42,9 @@ function normalizeProjectConfig(input) {
   const validationErrors = validateProviderConfig(provider);
   if (validationErrors.length > 0) {
     throw new Error(validationErrors.join('; '));
+  }
+  if (Object.prototype.hasOwnProperty.call(provider, 'templates')) {
+    throw new Error('provider.templates is not supported; use ignorekit components instead');
   }
 
   return {

@@ -32,18 +32,19 @@ function isInteractive(env = {}, envStdin) {
 /**
  * Interpret a confirmation answer.
  *
- * With the default [Y/n] prompt, empty input (just pressing Enter) proceeds
- * as yes — the user has already made all choices and is confirming them.
- * An explicit 'n' or 'no' declines.
+ * Empty input uses the prompt's configured default. An explicit 'n' or 'no'
+ * declines, and an explicit 'y' or 'yes' proceeds.
  *
  * @param {string} answer
  * @returns {boolean}
  */
-function interpretConfirm(answer) {
+function interpretConfirm(answer, defaultValue = true) {
   const v = String(answer == null ? '' : answer).trim().toLowerCase();
+  if (v === '') return defaultValue;
   if (v === 'n' || v === 'no') return false;
-  // empty, y/yes, or anything else → proceed (default is Y)
-  return true;
+  // Any other input follows the prompt's configured default.
+  if (v === 'y' || v === 'yes') return true;
+  return defaultValue;
 }
 
 /**
@@ -67,16 +68,17 @@ function interpretConfirm(answer) {
  * @param {object} env - { stdout, stdin, ask }
  * @param {object} [opts]
  * @param {string} [opts.prompt] - Prompt text
+ * @param {boolean} [opts.defaultValue=true] - Result for an empty answer
  * @returns {(() => Promise<boolean>)|null}
  */
-function createConfirm(env, { prompt = DEFAULT_PROMPT } = {}) {
+function createConfirm(env, { prompt = DEFAULT_PROMPT, defaultValue = true } = {}) {
   const stdout = env.stdout || process.stdout;
   const stdin = env.stdin || process.stdin;
 
   // env.ask short-circuits BEFORE isInteractive() — by design, so a test can
   // drive the prompt under CI without rewriting the prompt logic.
   if (env.ask) {
-    return async (overridePrompt) => interpretConfirm(await Promise.resolve(env.ask(overridePrompt || prompt)));
+    return async (overridePrompt) => interpretConfirm(await Promise.resolve(env.ask(overridePrompt || prompt)), defaultValue);
   }
 
   if (!isInteractive(env, stdin)) return null;
@@ -85,7 +87,7 @@ function createConfirm(env, { prompt = DEFAULT_PROMPT } = {}) {
     const rl = readline.createInterface({ input: stdin, output: stdout });
     rl.question(overridePrompt || prompt, (answer) => {
       rl.close();
-      resolve(interpretConfirm(answer));
+      resolve(interpretConfirm(answer, defaultValue));
     });
   });
 }

@@ -38,8 +38,7 @@ function parseSignificantLines(content, { keepRaw = false } = {}) {
   const split = String(content).replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   const out = [];
   for (const original of split) {
-    const trimmed = original.trim();
-    if (trimmed.length === 0 || trimmed.startsWith('#')) continue;
+    if (original.trim().length === 0 || original.startsWith('#')) continue;
     if (keepRaw) {
       out.push({ original });
     } else {
@@ -137,48 +136,15 @@ function expandBrackets(pattern) {
 /**
  * Normalize a gitignore pattern for matching purposes.
  *
- * Applies these transformations so semantically equivalent patterns are
- * treated as the same rule:
- *
- * 1. Trim leading and trailing whitespace — Git ignores leading whitespace
- *    in patterns (unless escaped), so stripping it is consistent with how
- *    Git resolves the rule.
- *
- * 2. Strip trailing slashes — Git treats "dir/" and "dir" identically for
- *    matching; the slash only restricts the pattern to directories, which
- *    doesn't affect which files get ignored. Stripping the slash allows
- *    ".codegraph" in a user's .gitignore to match ".codegraph/" in a
- *    component definition.
- *
- * 3. Strip leading slashes — In gitignore, "/pattern" anchors the match to
- *    the repository root, while "pattern" matches at any level. For matching
- *    purposes (does this rule cover the same thing?), they are equivalent:
- *    both ignore files/dirs named "pattern". Stripping the leading slash
- *    allows "/nbproject/private/" in a user's .gitignore to match
- *    "nbproject/private/" in a component definition.
- *
- * 4. Strip trailing "/*" — "dirname/*" and "dirname/" are semantically
- *    equivalent for matching: both ignore everything inside the directory.
- *    The "/*" form is used when negation rules follow (e.g. ".vscode/*"
- *    then "!.vscode/settings.json"), but the parent pattern itself covers
- *    the same files as "dirname/". Stripping "/*" allows ".vscode/" in a
- *    user's .gitignore to match ".vscode/*" in a component definition.
- *
- * 5. Strip leading slashes after negation prefix — "!/pattern" and
- *    "!pattern" are semantically equivalent for matching (the negation
- *    un-ignores the same files regardless of anchoring). Stripping the
- *    slash after "!" allows "!/foo" in a user's .gitignore to match
- *    "!foo" in a component definition.
+ * Preserve Git pattern syntax. Anchors, directory-only suffixes, negations,
+ * and whitespace can change a rule's meaning, so adoption only treats exact
+ * patterns as equal.
  *
  * @param {string} line
  * @returns {string}
  */
 function normalizePattern(line) {
-  const trimmed = line.trim();
-  const negated = trimmed.startsWith('!');
-  const base = negated ? trimmed.slice(1) : trimmed;
-  const stripped = base.replace(/^\/+/, '').replace(/\/\*+$/, '').replace(/\/+$/, '');
-  return negated ? '!' + stripped : stripped;
+  return String(line).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
 /**

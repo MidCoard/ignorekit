@@ -267,9 +267,10 @@ async function promptComponentCreation(options, env) {
     name: normalizeAnswer(await env.ask('Component name (e.g. runtime, secrets): ')),
     sourcePath: normalizeAnswer(await env.ask(sourcePrompt)) || defaultSourcePath,
     rules: [],
-    // --user-root is a discovery layer for analysis only; the write destination
-    // is --output-root, defaulting to the shared user definitions directory.
-    outputRoot: options.outputRoot || USER_ROOT
+    // --user-root is a discovery layer for analysis only. Keep the same write
+    // precedence as the non-interactive create workflow: explicit output root,
+    // then workspace definitions, then the user definitions directory.
+    outputRoot: options.outputRoot || options.workspaceRoot || USER_ROOT
   };
   if (state.sourcePath) state.sourcePath = path.resolve(env.cwd, state.sourcePath);
 
@@ -318,9 +319,9 @@ async function promptPresetCreation(options, env) {
     name: normalizeAnswer(await env.ask('Preset name: ')),
     base: undefined,
     components: [],
-    // --user-root is a discovery layer for analysis only; the write destination
-    // is --output-root, defaulting to the shared user definitions directory.
-    outputRoot: options.outputRoot || USER_ROOT
+    // Match component creation and the non-interactive workflow so guided
+    // creation does not silently bypass --workspace-root.
+    outputRoot: options.outputRoot || options.workspaceRoot || USER_ROOT
   };
 
   async function chooseBase() {

@@ -115,7 +115,7 @@ test('chooseRulesSmart does not print "Analyzing..." header when analysis throws
 
 // --- #5 (P0): coveredByLine must use normalized keys, not raw strings ---
 
-test('chooseRulesSmart pre-deselects duplicate rules that differ only in whitespace', async () => {
+test('chooseRulesSmart preserves whitespace-sensitive rules for user selection', async () => {
   const workspace = createTempWorkspace();
   try {
     // Component has "logs/" (no trailing space).
@@ -154,8 +154,8 @@ test('chooseRulesSmart pre-deselects duplicate rules that differ only in whitesp
     const content = fs.readFileSync(userFile, 'utf8');
     // "logs/" is covered by the component (after normalization), so it must
     // NOT appear in the extracted component. Only "cache/" should remain.
-    assert.doesNotMatch(content, /logs\//,
-      '"logs/" must be pre-deselected as covered despite whitespace difference');
+    assert.match(content, /logs\/   /,
+      '"logs/   " must remain selectable because it is not an exact component rule');
     assert.match(content, /cache\//,
       '"cache/" must be included as an uncovered custom rule');
   } finally {

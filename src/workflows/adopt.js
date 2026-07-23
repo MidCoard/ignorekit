@@ -236,6 +236,17 @@ async function runAdoptWorkflow(options, env) {
   const gitignorePath = path.join(projectPath, '.gitignore');
   const configPath = path.join(projectPath, 'ignorekit.json');
 
+  if (options.dryRun) {
+    stdout.write(`\n--- Preview (ignorekit.json) ---\n`);
+    stdout.write(`${JSON.stringify(config, null, 2)}\n`);
+    stdout.write(`--- End preview ---\n\n`);
+    stdout.write(`--- Preview (.gitignore) ---\n`);
+    stdout.write(gitignore);
+    stdout.write(`--- End preview ---\n\n`);
+    stdout.write('Dry run -- no files written or Git index changes made.\n');
+    return { projectPath, configPath, cachedRemoval: { action: 'skipped', files: [] }, analysis, warnings, dryRun: true };
+  }
+
   // STEP 1: Confirm writing ignorekit.json. When it already exists, the
   // question is phrased as an overwrite. When --overwrite-config is passed
   // the question is skipped. In non-interactive mode (no env.ask), an
@@ -293,9 +304,9 @@ async function runAdoptWorkflow(options, env) {
   }
 
   // Handle cached file removal. --remove-cached is an explicit opt-in, so it
-  // removes for real. Combine with --dry-run to preview without removing.
+  // removes for real. Dry-run exits above before touching Git's index.
   let cachedRemoval = { action: 'skipped', files: [] };
-  if (options.removeCached) {
+  if (options.removeCached && writeGitignore) {
     const files = listTrackedIgnoredFiles(projectPath);
     cachedRemoval = removeCachedFiles(projectPath, files, { dryRun: options.dryRun });
     if (cachedRemoval.action === 'dry-run' && cachedRemoval.files.length > 0) {
@@ -306,6 +317,8 @@ async function runAdoptWorkflow(options, env) {
     } else if (cachedRemoval.action === 'removed') {
       stdout.write(`Removed ${cachedRemoval.files.length} file(s) from Git index\n`);
     }
+  } else if (options.removeCached) {
+    stdout.write('Skipped --remove-cached because .gitignore was not written.\n');
   }
 
   return { projectPath, configPath, cachedRemoval, analysis, warnings };

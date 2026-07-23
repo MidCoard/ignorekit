@@ -50,8 +50,8 @@ A preset is a **project type template**. It answers the question: "what kind of 
 | `go` | generic | Go project | language/go |
 | `ruby` | generic | Ruby project | language/ruby |
 | `php` | generic | PHP project | language/php |
-| `c` | generic | C project | language/c |
-| `cpp` | generic | C++ project | language/cpp |
+| `c` | generic | C project | language/c-cpp |
+| `cpp` | generic | C++ project | language/c-cpp |
 | `cpp-cmake` | cpp | C++ + CMake | build/cmake |
 | `scientific` | generic | Research / ML / data analysis | domain/scientific-artifacts |
 
@@ -74,6 +74,7 @@ ignorekit init                                    # interactive: pick preset, us
 ignorekit init ./my-app --preset java-gradle --git
 ignorekit init ./web-app --preset vite
 ignorekit init ./my-app --preset node --exclude platform/windows
+ignorekit init ./my-app --preset node --dry-run
 ```
 
 If `--preset` is omitted, an interactive picker shows all presets with the best
@@ -88,15 +89,15 @@ ignorekit adopt                                   # fully interactive
 ignorekit adopt --preset java-gradle              # interactive with preset chosen
 ignorekit adopt --preset node --exclude platform/windows
 ignorekit adopt --preset java-gradle --component language/node  # mixed project
-ignorekit adopt --preset java-gradle --generate   # write without asking
-ignorekit adopt --preset generic --yes            # non-interactive / CI
+ignorekit adopt --preset java-gradle --confirm    # overwrite an existing .gitignore without asking
+ignorekit adopt --preset generic --dry-run         # preview both files without writing
 ```
 
 Adopt analyzes your existing `.gitignore`, shows strong component matches, carries over only rules not covered by your chosen preset or extra components, and writes `.gitignore` and `ignorekit.json` after you confirm.
 
-**Interactive flow:** analyze → pick preset → see components → pick extras → confirm → (overwrite-config?) → (preview?) → (generate?) → write.
+**Interactive flow:** analyze, pick a preset, choose extra components, review the config and preview, then confirm any existing files before writing.
 
-**Flags skip questions:** `--overwrite-config` skips "Overwrite config?", `--preview` skips "Show preview?" and shows the preview directly, `--generate` skips "Generate .gitignore?" and writes directly, `--yes` skips all prompts for CI pipelines.
+**Flags:** `--overwrite-config` replaces an existing config, `--preview` shows the generated `.gitignore` directly, `--confirm` skips the existing `.gitignore` overwrite prompt, and `--dry-run` previews both outputs without writing files or changing Git's index.
 
 Use repeatable `--component <id>` options for mixed projects; the selected components are saved in `ignorekit.json`.
 
@@ -107,7 +108,7 @@ ignorekit generate ./ignorekit.json
 ignorekit generate ./ignorekit.json --output ./path/.gitignore
 ```
 
-Pure — no Git side effects.
+`generate` only writes the output file by default. `--remove-cached` is an explicit opt-in to remove already-tracked ignored files from Git's index. `--dry-run` previews the generated file and makes no file or Git-index changes.
 
 ### `explain` — Understand your config
 
@@ -146,6 +147,10 @@ to `--category local --name runtime`. Guided creation lists every
 candidate rule or component, lets you choose a subset, then shows the final
 output path before it writes anything.
 
+Pass `--workspace-root <path>` to create definitions in a team-shared root
+when `--output-root` is omitted. `--dry-run` shows the planned target and
+content without creating a definition.
+
 **Smart extraction** is automatic when `--from <path>` is used: the source
 .gitignore is analyzed against known components and only the *unmatched* (custom)
 rules are extracted. To write literal rules, pass `--rule <pattern>` instead
@@ -170,8 +175,7 @@ Type a number to toggle, `1-3` to toggle a range, `all` / `none`, or `done` to
 confirm.
 
 **Confirmation prompt**: before writing any file, both `create component` and
-`create preset` show a preview and ask `Proceed? [y/N/cancel]`. Pass `--yes` to
-skip the prompt in scripts.
+`create preset` show a preview and ask `Proceed? [Y/n]`. In non-interactive environments the confirmation prompt is skipped.
 
 ## Project config
 
@@ -205,6 +209,10 @@ away without extra flags.
 
 For definitions shared across a team, use `--workspace-root` to point at a
 shared `.ignorekit` directory (e.g. in a monorepo or team config repo).
+For `remove`, `--workspace-root` is also the deletion target unless an explicit
+`--output-root` is supplied.
+Use `--dry-run` with `init`, `adopt`, `generate`, `create`, or `remove` to
+preview a write or deletion without changing files, Git state, or the index.
 
 ## Components
 
@@ -212,13 +220,13 @@ shared `.ignorekit` directory (e.g. in a monorepo or team config repo).
 |----------|-----------|
 | Platform | `platform/macos`, `platform/windows` |
 | Editor | `editor/jetbrains`, `editor/vscode`, `editor/temporary-files`, `editor/java-ide-metadata` |
-| Language | `language/java`, `language/node`, `language/python`, `language/rust`, `language/go`, `language/ruby`, `language/php`, `language/c`, `language/cpp` |
+| Language | `language/java`, `language/node`, `language/python`, `language/rust`, `language/go`, `language/ruby`, `language/php`, `language/c-cpp` |
 | Build | `build/gradle`, `build/maven`, `build/cmake` |
 | Package | `package/pip`, `package/poetry`, `package/pnpm`, `package/yarn` |
 | Framework | `framework/vite`, `framework/next`, `framework/nuxt`, `framework/angular`, `framework/sveltekit`, `framework/django`, `framework/flask` |
 | Testing | `testing/browser-e2e` |
 | Domain | `domain/scientific-artifacts` |
-| Local | `local/env-secrets`, `local/logs` |
+| Local | `local/env-secrets`, `local/logs`, `local/assistant-artifacts` |
 | AI tools | `local/ai-claude`, `local/ai-gemini`, `local/ai-codex`, `local/ai-codegraph` |
 
 AI tool components are opt-in. Add the tools your project actually uses as extra components in `ignorekit.json`.
@@ -228,14 +236,15 @@ AI tool components are opt-in. Add the tools your project actually uses as extra
 | Flag | Effect |
 |------|--------|
 | `--version` | Print version and exit |
-| `--help` | Show help; `--help <command>` for per-command details |
+| `--help` | Show help; `ignorekit <command> --help` for command details |
 
 ## Environment variables
 
 | Variable | Effect |
 |----------|--------|
 | `IGNOREKIT_DEBUG` | When set to any non-empty value, prints internal error messages that are otherwise swallowed (analysis failures, preset chain errors, etc.) to stderr. Useful when something silently does the wrong thing. |
-| `IGNOREKIT_GITIGNORE_IO_URL` | Overrides the gitignore.io API base URL. Set to a corporate mirror or local mock (e.g. `https://mirror.internal/gitignore`). The `/api/` path and template names are appended automatically. |
+| `IGNOREKIT_USER_ROOT` | Overrides the user definition root (default: `~/.ignorekit`). |
+| `IGNOREKIT_DIST_ROOT` | Overrides the shipped definition root. Intended for testing or embedded distributions. |
 | `IGNOREKIT_NONINTERACTIVE` | When set, skips every interactive prompt (preset picker, guided creation, confirmations) instead of hanging. Returns an error if a required choice can't be defaulted. Honored in CI environments automatically. |
 | `CI` | Standard CI flag. Same effect as `IGNOREKIT_NONINTERACTIVE` — avoid interactive prompts. |
 

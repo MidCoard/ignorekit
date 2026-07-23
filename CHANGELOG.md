@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.18] - 2026-07-23
+
+### Fixed
+- Make `generate --dry-run` and `adopt --dry-run` strictly read-only previews.
+- Prevent `adopt --remove-cached` from changing the Git index when `.gitignore` was not written.
+- Preserve Git pattern syntax when analyzing and adopting `.gitignore` files.
+- Make destructive remove prompts default to no, honor `--confirm`, and support user overrides and workspace roots.
+- Reject unsupported command options and support `ignorekit <command> --help`.
+- Align README command, component, and environment-variable documentation with the current CLI.
+- Reject obsolete provider template fields and remove their no-op generation path.
+- Calculate analysis coverage from unique source rules, preventing percentages above 100%.
+- Make `--workspace-root` a create target, and add read-only `--dry-run` support to `init`, `create`, and `remove`.
+- Reject whitespace-only and multi-line rules before they can create invalid definitions.
+
 ## [0.6.5] — 2026-07-14
 
 ### Fixed

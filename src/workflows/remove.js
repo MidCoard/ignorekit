@@ -25,19 +25,23 @@ function tryRemoveEmptyDir(dirPath) {
 }
 
 /**
- * Check whether a definition exists in the dist (shipped) layer.
- * Shipped definitions cannot be removed — only user/workspace layer ones can.
+ * Resolve the writable definition target. Explicit output roots take
+ * precedence over workspace and user roots.
  *
- * @param {string} type - 'component' or 'preset'
- * @param {string} id - Definition ID (e.g. 'language/java')
- * @returns {boolean}
+ * @param {object} options
+ * @param {string} cwd
+ * @returns {string}
  */
-function isShippedDefinition(type, id) {
-  assertDefinitionId(id);
-  const subDir = type === 'component' ? 'components' : 'presets';
-  const ext = type === 'component' ? '.gitignore' : '.json';
-  const filePath = path.join(DIST_ROOT, subDir, `${id}${ext}`);
-  return fs.existsSync(filePath);
+function resolveOutputRoot(options, cwd) {
+  const root = options.outputRoot || options.workspaceRoot || options.userRoot || USER_ROOT;
+  return path.resolve(cwd, root);
+}
+
+function assertWritableDefinitionRoot(outputRoot, options) {
+  const distRoot = path.resolve(options.distRoot || process.env.IGNOREKIT_DIST_ROOT || DIST_ROOT);
+  if (path.resolve(outputRoot) === distRoot) {
+    throw new Error('Shipped definitions cannot be removed. Choose a user or workspace definition root.');
+  }
 }
 
 /**
@@ -47,6 +51,8 @@ function isShippedDefinition(type, id) {
  * @param {string} options.id - Component ID (e.g. 'language/kotlin-canceled')
  * @param {string} [options.outputRoot] - Definition root (default: ~/.ignorekit)
  * @param {boolean} [options.confirm] - Confirm removal without prompt
+ * @param {boolean} [options.dryRun] - Preview without deleting
+ * @param {string} [options.workspaceRoot] - Workspace-level definition directory
  * @param {object} env
  * @param {object} env.stdout - Writable stream for output
  * @param {object} [env.stderr] - Writable stream for errors
@@ -59,14 +65,8 @@ async function runComponentRemove(options, env) {
   const { stdout, stderr, cwd } = extractStreams(env);
   assertDefinitionId(options.id);
 
-  // Guard: shipped definitions cannot be removed
-  if (isShippedDefinition('component', options.id)) {
-    throw new Error(`Shipped component cannot be removed: ${options.id}. Only user-defined components can be deleted.`);
-  }
-
-  const outputRoot = options.outputRoot
-    ? path.resolve(cwd, options.outputRoot)
-    : USER_ROOT;
+  const outputRoot = resolveOutputRoot(options, cwd);
+  assertWritableDefinitionRoot(outputRoot, options);
   const filePath = resolveInside(outputRoot, path.join('components', `${options.id}.gitignore`));
 
   if (!fs.existsSync(filePath)) {
@@ -77,11 +77,16 @@ async function runComponentRemove(options, env) {
   stdout.write(`Component: ${options.id}\n`);
   stdout.write(`Path: ${filePath}\n`);
 
+  if (options.dryRun) {
+    stdout.write('Dry run -- no component file removed.\n');
+    return { id: options.id, removed: false, path: filePath, dryRun: true };
+  }
+
   // Confirm — guard against non-interactive environments
   if (!env.confirm && !options.confirm) {
     throw new Error('Confirmation required. Use --confirm to skip the prompt in non-interactive mode.');
   }
-  if (env.confirm) {
+  if (env.confirm && !options.confirm) {
     const proceed = await env.confirm('Remove this component? [y/N]: ');
     if (!proceed) {
       stdout.write('Cancelled — no file removed.\n');
@@ -109,6 +114,8 @@ async function runComponentRemove(options, env) {
  * @param {string} options.id - Preset ID (e.g. 'my-custom-preset')
  * @param {string} [options.outputRoot] - Definition root (default: ~/.ignorekit)
  * @param {boolean} [options.confirm] - Confirm removal without prompt
+ * @param {boolean} [options.dryRun] - Preview without deleting
+ * @param {string} [options.workspaceRoot] - Workspace-level definition directory
  * @param {object} env
  * @param {object} env.stdout - Writable stream for output
  * @param {object} [env.stderr] - Writable stream for errors
@@ -121,14 +128,8 @@ async function runPresetRemove(options, env) {
   const { stdout, stderr, cwd } = extractStreams(env);
   assertDefinitionId(options.id);
 
-  // Guard: shipped definitions cannot be removed
-  if (isShippedDefinition('preset', options.id)) {
-    throw new Error(`Shipped preset cannot be removed: ${options.id}. Only user-defined presets can be deleted.`);
-  }
-
-  const outputRoot = options.outputRoot
-    ? path.resolve(cwd, options.outputRoot)
-    : USER_ROOT;
+  const outputRoot = resolveOutputRoot(options, cwd);
+  assertWritableDefinitionRoot(outputRoot, options);
   const filePath = resolveInside(outputRoot, path.join('presets', `${options.id}.json`));
 
   if (!fs.existsSync(filePath)) {
@@ -139,11 +140,16 @@ async function runPresetRemove(options, env) {
   stdout.write(`Preset: ${options.id}\n`);
   stdout.write(`Path: ${filePath}\n`);
 
+  if (options.dryRun) {
+    stdout.write('Dry run -- no preset file removed.\n');
+    return { id: options.id, removed: false, path: filePath, dryRun: true };
+  }
+
   // Confirm — guard against non-interactive environments
   if (!env.confirm && !options.confirm) {
     throw new Error('Confirmation required. Use --confirm to skip the prompt in non-interactive mode.');
   }
-  if (env.confirm) {
+  if (env.confirm && !options.confirm) {
     const proceed = await env.confirm('Remove this preset? [y/N]: ');
     if (!proceed) {
       stdout.write('Cancelled — no file removed.\n');

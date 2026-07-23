@@ -178,6 +178,27 @@ test('analyze with fully covered .gitignore has no unmatched lines', () => {
   }
 });
 
+test('analyze coverage counts each source rule once when components overlap', () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/editor/one.gitignore', 'shared-output/\n');
+    workspace.writeText('dist/components/editor/two.gitignore', 'shared-output/\n');
+    workspace.writeText('.gitignore', 'shared-output/\n');
+
+    let output = '';
+    const result = runAnalyzeWorkflow(
+      { gitignorePath: workspace.path('.gitignore'), distRoot: workspace.path('dist') },
+      { stdout: { write: text => { output += text; } }, cwd: workspace.root }
+    );
+
+    assert.equal(result.unmatchedLines.length, 0);
+    assert.match(output, /Matched components \(100% coverage\):/);
+    assert.doesNotMatch(output, /200% coverage/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
 test('analyze hides one-rule partial matches that share a generic output directory', () => {
   const workspace = createTempWorkspace();
   try {
@@ -210,35 +231,33 @@ test('parseSignificantLines preserves gitignore pattern syntax', () => {
   assert.deepEqual(lines, ['\\#literal-name', '  leading-space', 'trailing-space\\ ']);
 });
 
-test('matchComponent treats trailing-slash patterns as equivalent to their non-slash form', () => {
+test('matchComponent does not conflate a directory rule with an unqualified pattern', () => {
   // Git treats "build" and "build/" identically for matching purposes (the slash
   // only restricts the pattern to directories, but both ignore the same files).
   // normalizePattern strips trailing slashes so that ".codegraph" in a user's
   // .gitignore matches ".codegraph/" in a component definition.
   const result = matchComponent(['build'], 'build/\n');
-  assert.equal(result.matched.length, 1);
-  assert.equal(result.unmatched.length, 0);
+  assert.equal(result.matched.length, 0);
+  assert.equal(result.unmatched.length, 1);
 });
 
-test('matchComponent treats dir/ as equivalent to dir/* for matching', () => {
+test('matchComponent does not conflate dir/ with dir/*', () => {
   // A user's .gitignore has ".vscode/" (ignore the directory). The component
   // has ".vscode/*" (ignore contents, with negations for specific files).
   // For matching purposes they cover the same files — normalizePattern strips
   // the trailing "/*" so ".vscode/" matches ".vscode/*".
   const result = matchComponent(['.vscode/'], '.vscode/*\n!.vscode/settings.json\n');
-  assert.equal(result.matched.length, 1,
-    `.vscode/ should match .vscode/*; got ${result.matched.length} matched`);
+  assert.equal(result.matched.length, 0);
   // The negation line is a separate rule and won't match .vscode/ — that's
   // correct. The important thing is the parent directory pattern matches.
 });
 
-test('matchComponent treats /pattern as equivalent to pattern for matching', () => {
+test('matchComponent preserves root anchoring when comparing patterns', () => {
   // A user's .gitignore has "/nbproject/private/" (anchored to root). The
   // component has "nbproject/private/" (matches at any level). For matching
   // purposes they are equivalent — normalizePattern strips leading slashes.
   const result = matchComponent(['/nbproject/private/'], 'nbproject/private/\n');
-  assert.equal(result.matched.length, 1,
-    `/nbproject/private/ should match nbproject/private/; got ${result.matched.length} matched`);
+  assert.equal(result.matched.length, 0);
 });
 
 test('matchComponent excludes negation patterns from ratio so they do not inflate the total', () => {
@@ -436,62 +455,60 @@ test('scorePreset with line coverage: preset covering more lines wins', () => {
 
 // --- #1: normalizePattern must trim whitespace for matching ---
 
-test('normalizePattern trims whitespace, slashes, and globs so semantically equivalent patterns match', () => {
+test('normalizePattern preserves Git pattern syntax for conservative matching', () => {
   const { normalizePattern } = require('../src/core/text');
   // Patterns with leading/trailing whitespace must normalize to the same key
   // as their trimmed form, so matching is not broken by whitespace differences.
   // Trailing slashes are also stripped because Git treats "dir/" and "dir"
   // identically for matching purposes.
-  assert.equal(normalizePattern('  node_modules/'), 'node_modules',
+  assert.equal(normalizePattern('  node_modules/'), '  node_modules/',
     'leading whitespace must be trimmed');
-  assert.equal(normalizePattern('node_modules/  '), 'node_modules',
+  assert.equal(normalizePattern('node_modules/  '), 'node_modules/  ',
     'trailing whitespace must be trimmed');
-  assert.equal(normalizePattern('  node_modules/  '), 'node_modules',
+  assert.equal(normalizePattern('  node_modules/  '), '  node_modules/  ',
     'both leading and trailing whitespace must be trimmed');
-  assert.equal(normalizePattern('node_modules/'), 'node_modules',
+  assert.equal(normalizePattern('node_modules/'), 'node_modules/',
     'trailing slash must be stripped');
   assert.equal(normalizePattern('node_modules'), 'node_modules',
     'already-normalized pattern is unchanged');
   // Leading slashes are stripped because "/pattern" and "pattern" are
   // semantically equivalent for matching (both ignore the same files;
   // the leading slash only anchors to root, which doesn't change coverage).
-  assert.equal(normalizePattern('/nbproject/private/'), 'nbproject/private',
+  assert.equal(normalizePattern('/nbproject/private/'), '/nbproject/private/',
     'leading slash must be stripped');
-  assert.equal(normalizePattern('/dist/'), 'dist',
+  assert.equal(normalizePattern('/dist/'), '/dist/',
     'leading slash on short pattern must be stripped');
   // Trailing "/*" is stripped because "dirname/*" and "dirname/" are
   // semantically equivalent for matching — both ignore everything inside
   // the directory. The "/*" form is used with negation rules, but the
   // parent pattern covers the same files.
-  assert.equal(normalizePattern('.vscode/*'), '.vscode',
+  assert.equal(normalizePattern('.vscode/*'), '.vscode/*',
     'trailing /* must be stripped so .vscode/ matches .vscode/*');
-  assert.equal(normalizePattern('.vscode/'), '.vscode',
+  assert.equal(normalizePattern('.vscode/'), '.vscode/',
     '.vscode/ and .vscode/* must normalize to the same key');
-  assert.equal(normalizePattern('build/*'), 'build',
+  assert.equal(normalizePattern('build/*'), 'build/*',
     'trailing /* on other patterns must be stripped');
   // Negation patterns: "!/pattern" and "!pattern" are semantically equivalent
   // for matching — the negation un-ignores the same files regardless of anchoring.
   // normalizePattern must strip the leading slash after the "!" prefix.
-  assert.equal(normalizePattern('!/foo'), '!foo',
+  assert.equal(normalizePattern('!/foo'), '!/foo',
     'leading slash after ! must be stripped so !/foo matches !foo');
-  assert.equal(normalizePattern('!/foo/'), '!foo',
+  assert.equal(normalizePattern('!/foo/'), '!/foo/',
     'leading slash and trailing slash after ! must both be stripped');
   assert.equal(normalizePattern('!foo'), '!foo',
     'negation without leading slash is unchanged');
-  assert.equal(normalizePattern('!.vscode/*'), '!.vscode',
+  assert.equal(normalizePattern('!.vscode/*'), '!.vscode/*',
     'negation with trailing /* must strip both ! prefix slash and trailing /*');
 });
 
-test('matchComponent matches lines that differ only in leading/trailing whitespace', () => {
+test('matchComponent keeps whitespace-sensitive patterns distinct', () => {
   // Input lines have trailing spaces; component content does not (or vice versa).
   // normalizePattern must make them match.
   const inputLines = ['node_modules/', '  dist/  ', '.env  '];
   const componentContent = 'node_modules/\ndist/\n.env\n';
   const result = matchComponent(inputLines, componentContent);
-  assert.equal(result.matched.length, 3,
-    `all 3 lines should match despite whitespace differences; got ${result.matched.length} matched, ${result.unmatched.length} unmatched`);
-  assert.equal(result.unmatched.length, 0);
-  assert.equal(result.ratio, 1.0);
+  assert.equal(result.matched.length, 1);
+  assert.equal(result.unmatched.length, 2);
 });
 
 test('analyze size guard uses byte length, not character length', () => {

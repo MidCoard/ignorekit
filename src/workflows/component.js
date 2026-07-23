@@ -33,11 +33,12 @@ function assertSegment(value, label) {
  * @param {string} options.name - Component name (e.g. 'runtime')
  * @param {string} [options.from] - Path to a source .gitignore file (smart analysis applied)
  * @param {string[]} [options.rules] - Explicit rules (skips analysis if provided)
- * @param {string} [options.outputRoot] - Output directory (default: ~/.ignorekit)
+ * @param {string} [options.outputRoot] - Output directory (otherwise workspaceRoot, then ~/.ignorekit)
  * @param {boolean} [options.overwrite] - Replace an existing component
+ * @param {boolean} [options.dryRun] - Preview without writing
  * @param {string} [options.distRoot] - Override dist root for analysis
  * @param {string} [options.userRoot] - User-level override directory for analysis
- * @param {string} [options.workspaceRoot] - Workspace-level definition directory for analysis
+ * @param {string} [options.workspaceRoot] - Workspace-level definition directory for analysis and default output
  * @param {object} env
  * @param {object} env.stdout - Writable stream for output
  * @param {string} [env.cwd] - Current working directory
@@ -51,10 +52,12 @@ async function runComponentCreate(options, env) {
 
   const outputRoot = options.outputRoot
     ? path.resolve(cwd, options.outputRoot)
-    : USER_ROOT;
+    : options.workspaceRoot
+      ? path.resolve(cwd, options.workspaceRoot)
+      : USER_ROOT;
   const id = `${options.category}/${options.name}`;
   const outputPath = resolveInside(outputRoot, path.join('components', `${id}.gitignore`));
-  if (fs.existsSync(outputPath) && !options.overwrite) {
+  if (fs.existsSync(outputPath) && !options.overwrite && !options.dryRun) {
     throw new Error(`Component already exists: ${outputPath}. Use --overwrite to replace it.`);
   }
 
@@ -66,7 +69,7 @@ async function runComponentCreate(options, env) {
   // `_userRootExplicit` flag set by applyUserRootDefault so the warning only
   // fires when the user actually typed --user-root — the silent default
   // would otherwise produce a confusing note on every create.
-  if (options._userRootExplicit && !options.outputRoot) {
+  if (options._userRootExplicit && !options.outputRoot && !options.workspaceRoot) {
     stderr.write(`Note: --user-root is a discovery source. Without --output-root, the file is written to ${USER_ROOT} (the default user definitions layer).\n`);
     stderr.write(`      Pass --output-root to write somewhere else.\n`);
   }
@@ -143,8 +146,8 @@ async function runComponentCreate(options, env) {
     }
   }
 
-  if (rules.some(rule => typeof rule !== 'string' || rule.length === 0)) {
-    throw new Error('component rules must be non-empty strings');
+  if (rules.some(rule => typeof rule !== 'string' || rule.trim().length === 0 || /[\r\n]/.test(rule))) {
+    throw new Error('component rules must be non-empty strings without line breaks');
   }
 
   // Preview before writing
@@ -154,6 +157,11 @@ async function runComponentCreate(options, env) {
     stdout.write(`  ${i + 1}. ${rules[i]}\n`);
   }
   stdout.write(`Output: ${outputPath}\n`);
+
+  if (options.dryRun) {
+    stdout.write('Dry run -- no component file written.\n');
+    return { id, outputPath, rules, analysis, warnings, dryRun: true };
+  }
 
   if (env.confirm) {
     const proceed = await env.confirm('Write component file? [Y/n]: ');
@@ -184,7 +192,9 @@ async function runComponentCreate(options, env) {
     stdout.write(`\nCreated component ${id} (${rules.length} rules) → ${outputPath}\n`);
   }
 
-  if (!options.outputRoot) {
+  if (options.workspaceRoot && !options.outputRoot) {
+    stdout.write(`  Component is available through the workspace definitions layer.\n`);
+  } else if (!options.outputRoot) {
     stdout.write(`  Component is available to all projects via the user definitions layer.\n`);
   }
 

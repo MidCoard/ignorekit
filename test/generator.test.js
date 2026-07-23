@@ -6,7 +6,7 @@ const { createTempWorkspace } = require('./helpers/temp-workspace');
 const { createDefinitionResolver } = require('../src/definitions/resolver');
 const { generateGitignore } = require('../src/generator');
 
-test('generator combines provider text, preset components, config components, and custom rules', async () => {
+test('generator combines preset components, config components, and custom rules', async () => {
   const workspace = createTempWorkspace();
   try {
     workspace.writeText('dist/components/local/logs.gitignore', 'logs/\n*.log\n');
