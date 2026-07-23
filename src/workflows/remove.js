@@ -6,6 +6,28 @@ const { assertDefinitionId, resolveInside, USER_ROOT, DIST_ROOT } = require('../
 const { extractStreams } = require('../core/env');
 
 /**
+ * Search a definitions root for a file matching the given basename across
+ * all category subdirectories. Returns the category name if found, null
+ * otherwise. Used to suggest the full ID when the user omits the category
+ * prefix (e.g. "my-comp" instead of "local/my-comp").
+ *
+ * @param {string} kindDir - Path to the definitions directory (e.g. .../components)
+ * @param {string} basename - Filename to search for (e.g. "my-comp.gitignore")
+ * @returns {{ category: string, filePath: string }|null}
+ */
+function findDefinitionInRoot(kindDir, basename) {
+  if (!fs.existsSync(kindDir)) return null;
+  for (const entry of fs.readdirSync(kindDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const candidate = path.join(kindDir, entry.name, basename);
+    if (fs.existsSync(candidate)) {
+      return { category: entry.name, filePath: candidate };
+    }
+  }
+  return null;
+}
+
+/**
  * Remove an empty directory, ignoring errors when it is not empty.
  * After deleting a component or preset, the parent category directory
  * (e.g. ~/.ignorekit/components/language/) may be left empty. This
@@ -70,7 +92,17 @@ async function runComponentRemove(options, env) {
   const filePath = resolveInside(outputRoot, path.join('components', `${options.id}.gitignore`));
 
   if (!fs.existsSync(filePath)) {
-    throw new Error(`Component not found: ${filePath}. Only user-layer definitions can be removed.`);
+    // The file wasn't found at the exact path. Two common causes:
+    // 1. The user omitted the category prefix (e.g. "my-comp" instead of "local/my-comp")
+    // 2. The component genuinely doesn't exist in this root
+    // Search the output root for a component with a matching name in any category,
+    // and suggest the full ID if found.
+    const match = findDefinitionInRoot(path.join(outputRoot, 'components'), `${options.id}.gitignore`);
+    if (match) {
+      const fullId = `${match.category}/${options.id}`;
+      throw new Error(`Component not found: ${options.id}. Did you mean '${fullId}'? (full ID including category is required)`);
+    }
+    throw new Error(`Component not found: ${options.id}. No matching component in ${outputRoot}.`);
   }
 
   // Preview
@@ -133,7 +165,9 @@ async function runPresetRemove(options, env) {
   const filePath = resolveInside(outputRoot, path.join('presets', `${options.id}.json`));
 
   if (!fs.existsSync(filePath)) {
-    throw new Error(`Preset not found: ${filePath}. Only user-layer definitions can be removed.`);
+    // Presets don't have category subdirectories, so just report not found
+    // with a clearer message than the old "Only user-layer" text.
+    throw new Error(`Preset not found: ${options.id}. No matching preset in ${outputRoot}.`);
   }
 
   // Preview

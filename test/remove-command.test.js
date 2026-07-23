@@ -120,6 +120,22 @@ test('remove component errors when file not found', async () => {
   );
 });
 
+test('remove component suggests full ID when user omits category prefix', async () => {
+  const tmp = createTempDir();
+  try {
+    tmp.writeText('components/local/my-comp.gitignore', '*.comp\n');
+    await assert.rejects(
+      () => runComponentRemove(
+        { id: 'my-comp', outputRoot: tmp.root },
+        { stdout: { write() {} }, stderr: { write() {} }, cwd: process.cwd() }
+      ),
+      /Did you mean 'local\/my-comp'/
+    );
+  } finally {
+    tmp.cleanup();
+  }
+});
+
 test('remove component requires confirmation in non-interactive mode', async () => {
   const tmp = createTempDir();
   try {
