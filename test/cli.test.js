@@ -1356,3 +1356,130 @@ test('pickPresetInteractive matches preset names case-insensitively', async () =
     workspace.cleanup();
   }
 });
+
+// --- Search command ---
+
+test('search finds components containing a rule pattern', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', '# Logs\nlogs/\n*.log\nnpm-debug.log*\n');
+    workspace.writeText('dist/components/platform/macos.gitignore', '# macOS\n.DS_Store\n.AppleDouble\n');
+
+    const writes = [];
+    const result = await runCli(
+      ['search', '*.log'],
+      {
+        stdout: { write: text => writes.push(String(text)) },
+        stderr: { write: () => {} },
+        cwd: process.cwd(),
+        envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') }
+      }
+    );
+
+    assert.equal(result.exitCode, 0);
+    const output = writes.join('');
+    assert.match(output, /local\/logs/);
+    assert.match(output, /\*\.log/);
+    // Substring match: "*.log" matches the line "*.log" but not "npm-debug.log*"
+    // because the search is a text substring, not glob expansion.
+    assert.doesNotMatch(output, /platform\/macos/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('search is case-insensitive', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/platform/macos.gitignore', '# macOS\n.DS_Store\n.localized\n');
+
+    const writes = [];
+    const result = await runCli(
+      ['search', '.ds_store'],
+      {
+        stdout: { write: text => writes.push(String(text)) },
+        stderr: { write: () => {} },
+        cwd: process.cwd(),
+        envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') }
+      }
+    );
+
+    assert.equal(result.exitCode, 0);
+    const output = writes.join('');
+    assert.match(output, /platform\/macos/);
+    assert.match(output, /\.DS_Store/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('search with no matches shows "No components found"', async () => {
+  const workspace = createTempWorkspace();
+  try {
+    workspace.writeText('dist/components/local/logs.gitignore', '# Logs\nlogs/\n*.log\n');
+
+    const writes = [];
+    const result = await runCli(
+      ['search', 'unicorn_pattern_xyz'],
+      {
+        stdout: { write: text => writes.push(String(text)) },
+        stderr: { write: () => {} },
+        cwd: process.cwd(),
+        envVars: { IGNOREKIT_DIST_ROOT: workspace.path('dist') }
+      }
+    );
+
+    assert.equal(result.exitCode, 0);
+    const output = writes.join('');
+    assert.match(output, /No components found/);
+  } finally {
+    workspace.cleanup();
+  }
+});
+
+test('search without pattern argument errors', async () => {
+  const result = await runCli(
+    ['search'],
+    {
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      cwd: process.cwd()
+    }
+  );
+
+  assert.equal(result.exitCode, 1);
+});
+
+test('help search shows usage', async () => {
+  const writes = [];
+  const result = await runCli(
+    ['help', 'search'],
+    {
+      stdout: { write: text => writes.push(String(text)) },
+      stderr: { write: () => {} },
+      cwd: process.cwd()
+    }
+  );
+
+  assert.equal(result.exitCode, 0);
+  const output = writes.join('');
+  assert.match(output, /search/);
+  assert.match(output, /pattern/);
+});
+
+test('search --help shows usage', async () => {
+  const writes = [];
+  const result = await runCli(
+    ['search', '--help'],
+    {
+      stdout: { write: text => writes.push(String(text)) },
+      stderr: { write: () => {} },
+      cwd: process.cwd()
+    }
+  );
+
+  assert.equal(result.exitCode, 0);
+  const output = writes.join('');
+  assert.match(output, /search/);
+  assert.match(output, /pattern/);
+});

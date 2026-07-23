@@ -20,6 +20,7 @@ const { runExplainWorkflow } = require('./workflows/explain');
 const { runAnalyzeWorkflow, analyzeGitignore, tryAnalyzeGitignore } = require('./workflows/analyze');
 const { debugError } = require('./core/debug');
 const { extractStreams } = require('./core/env');
+const { parseSignificantLines } = require('./core/text');
 const { listTrackedIgnoredFiles, removeCachedFiles } = require('./git');
 
 // --- Argument parsing ---
@@ -139,6 +140,7 @@ Commands:
   generate    Generate .gitignore from a project config
   explain     Explain what an ignorekit.json config produces
   analyze     Analyze a .gitignore against known components
+  search      Find components containing a rule pattern
   init        Initialize a new project with config and .gitignore
   adopt       Adopt an existing project into ignorekit
   create      Create a component or preset definition
@@ -169,6 +171,30 @@ Examples:
   ignorekit list
   ignorekit list components
   ignorekit list presets
+`,
+    search: `ignorekit search - Find components containing a rule pattern
+
+Usage:
+  ignorekit search <pattern> [options]
+
+Arguments:
+  pattern    Rule pattern to search for (e.g. "*.log", ".DS_Store", "node_modules")
+
+Options:
+  --workspace-root <path> Team-shared definition directory
+
+Searches all component rules for the given pattern. Useful for finding
+which component covers a specific rule, or discovering components you
+may want to add to your project.
+
+The search is case-insensitive and matches against the rule text, so
+"*.log" will match "npm-debug.log*" and "*.log.lck".
+
+Examples:
+  ignorekit search .DS_Store
+  ignorekit search "*.log"
+  ignorekit search node_modules
+  ignorekit search .env
 `,
     generate: `ignorekit generate - Generate .gitignore from a project config
 
@@ -414,6 +440,55 @@ function commandList(args, env) {
 
   if (!['all', 'components', 'presets'].includes(target)) {
     throw new Error(`Unknown list target: ${target}. Use: components, presets`);
+  }
+}
+
+// --- Search command ---
+
+function commandSearch(args, env) {
+  const { stdout, stderr, cwd } = extractStreams(env);
+  const options = parseArgs(args);
+  assertAllowedOptions('search', options, new Set(['workspaceRoot']));
+  applyUserRootDefault(options);
+
+  const pattern = options._[0];
+  if (!pattern) {
+    throw new Error('Missing pattern argument. Usage: ignorekit search <pattern>');
+  }
+
+  const resolver = buildResolver({ options, env, projectDirHint: cwd });
+  const components = resolver.listComponents();
+  const needle = pattern.toLowerCase();
+  const results = [];
+
+  for (const id of components) {
+    try {
+      const content = resolver.readComponent(id);
+      const lines = parseSignificantLines(content);
+      const matches = lines.filter(line => line.toLowerCase().includes(needle));
+      if (matches.length > 0) {
+        results.push({ id, matches });
+      }
+    } catch (err) {
+      // Component may be unreadable (permissions, broken symlink, etc.).
+      // Skip it silently — search is a read-only query and should not crash
+      // on a single bad component.
+      debugError(err, 'search.readComponent', { stdout, stderr, cwd });
+    }
+  }
+
+  if (results.length === 0) {
+    stdout.write(`No components found matching "${pattern}".\n`);
+    return;
+  }
+
+  stdout.write(`Components matching "${pattern}" (${results.length}):\n\n`);
+  for (const { id, matches } of results) {
+    stdout.write(`  ${id}\n`);
+    for (const line of matches) {
+      stdout.write(`    ${line}\n`);
+    }
+    stdout.write('\n');
   }
 }
 
@@ -732,7 +807,7 @@ async function runCli(args, env = {}) {
       return { exitCode: 0 };
     }
 
-    if (['list', 'generate', 'explain', 'analyze', 'init', 'adopt', 'create', 'remove'].includes(command) &&
+    if (['list', 'search', 'generate', 'explain', 'analyze', 'init', 'adopt', 'create', 'remove'].includes(command) &&
         args.slice(1).some(arg => arg === '--help' || arg === '-h')) {
       printCommandHelp(command, stdout);
       return { exitCode: 0 };
@@ -741,6 +816,12 @@ async function runCli(args, env = {}) {
     // List
     if (command === 'list') {
       commandList(args.slice(1), { stdout, stderr, cwd });
+      return { exitCode: 0 };
+    }
+
+    // Search
+    if (command === 'search') {
+      commandSearch(args.slice(1), { stdout, stderr, cwd });
       return { exitCode: 0 };
     }
 
