@@ -97,17 +97,44 @@ async function runAdoptWorkflow(options, env) {
         writeMatchedComponentsBlock(analysis.displayMatchedComponents, { stdout });
       }
 
-      if (analysis.displayedUnmatchedLines.length > 0) {
-        stdout.write(`Custom rules (${analysis.displayedUnmatchedLines.length}):\n`);
-        for (const line of analysis.displayedUnmatchedLines) {
-          stdout.write(`  ${line}\n`);
-        }
-        stdout.write('\n');
-      }
-
       // Compare chosen preset against analysis. The preset was already
       // validated above (before the analysis section), so presetComponents
       // is guaranteed to be resolved.
+      //
+      // Build a map: normalized rule key → component ID that covers it.
+      // This lets us annotate unmatched lines as "covered by preset" or
+      // "covered by extra component" instead of lumping them all under
+      // "custom rules". A line like `.DS_Store` may be unmatched by any
+      // component in the analysis (platform/macos wasn't matched because
+      // its ratio was too low), but the preset includes platform/macos
+      // and its rules cover it.
+      const ruleToComponent = new Map();
+      function addComponentRules(id) {
+        const r = analysis.componentResults.get(id);
+        if (r) {
+          for (const line of r.matched) {
+            for (const expanded of normalizePatternExpanded(line)) {
+              if (!ruleToComponent.has(expanded)) ruleToComponent.set(expanded, id);
+            }
+          }
+        }
+        if (!r) {
+          try {
+            const content = resolver.readComponent(id);
+            for (const line of parseSignificantLines(content)) {
+              for (const expanded of normalizePatternExpanded(line)) {
+                if (!ruleToComponent.has(expanded)) ruleToComponent.set(expanded, id);
+              }
+            }
+          } catch (err) {
+            debugError(err, 'adopt.ruleToComponent', env);
+          }
+        }
+      }
+      // Seed with preset components.
+      for (const id of presetComponents) {
+        addComponentRules(id);
+      }
 
       // Find components in the preset that are NOT already fully present in the
       // current .gitignore. A 'full' classification only means >=80% overlap, so a
@@ -143,11 +170,47 @@ async function runAdoptWorkflow(options, env) {
           for (const id of selectedIds) {
             if (!options.components.includes(id)) {
               options.components.push(id);
+              // Register extra component rules in ruleToComponent so the
+              // custom-rules display can annotate them as covered.
+              addComponentRules(id);
             }
           }
           stdout.write(`Added ${selectedIds.length} extra component(s): ${selectedIds.join(', ')}\n`);
         } else {
           stdout.write('No extra components added.\n');
+        }
+      }
+
+      // Display unmatched lines, annotated with which component covers them.
+      if (analysis.displayedUnmatchedLines.length > 0) {
+        const coveredLines = [];
+        const trulyCustom = [];
+        for (const line of analysis.displayedUnmatchedLines) {
+          const expanded = normalizePatternExpanded(line);
+          const coveringComponent = expanded.length > 0
+            ? expanded.map(e => ruleToComponent.get(e)).find(c => c !== undefined)
+            : undefined;
+          if (coveringComponent) {
+            coveredLines.push({ line, component: coveringComponent });
+          } else {
+            trulyCustom.push(line);
+          }
+        }
+
+        if (trulyCustom.length > 0) {
+          stdout.write(`Custom rules (${trulyCustom.length}):\n`);
+          for (const line of trulyCustom) {
+            stdout.write(`  ${line}\n`);
+          }
+          stdout.write('\n');
+        }
+
+        if (coveredLines.length > 0) {
+          stdout.write(`Covered by selected components (${coveredLines.length}):\n`);
+          for (const { line, component } of coveredLines) {
+            stdout.write(`  ${line}  (${component})\n`);
+          }
+          stdout.write('\n');
         }
       }
 
